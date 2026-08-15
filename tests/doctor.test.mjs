@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, rmSync, chmodSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkProfiles, checkDshHome, checkZstd, checkNode, checkPort, checkDedupe, runAll, computeExitCode, buildEnvelope } from '../doctor.mjs'
+import { checkProfiles, checkDshHome, checkZstd, checkNode, checkPort, checkDedupe, checkLogHealth, scanZstdFrames, zstdDecompressAll, zstdAvailable, runAll, computeExitCode, buildEnvelope } from '../doctor.mjs'
 
 const DOCTOR = fileURLToPath(new URL('../doctor.mjs', import.meta.url))
 
@@ -83,6 +83,34 @@ test('runAll returns structured checks for a temp home', async () => {
     assert.ok(['ok', 'warn', 'fail'].includes(c.status))
   }
   rmSync(home, { recursive: true, force: true })
+})
+
+test('scanZstdFrames rejects corrupt magic', () => {
+  const buf = Buffer.from([0x01, 0x02, 0x03, 0x04, 0x05])
+  assert.throws(() => scanZstdFrames(buf), /corrupt zstd frame magic/)
+})
+
+test('checkLogHealth handles an empty sessions dir', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ddl-'))
+  const result = checkLogHealth(home)
+  assert.equal(result.status, 'ok')
+  assert.equal(result.name, 'log_health')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('multi-frame zstd roundtrip decodes fully (skipped without zstd)', (t) => {
+  if (!zstdAvailable()) {
+    t.skip('built-in zstd unavailable on this Node')
+    return
+  }
+  const zlib = process.getBuiltinModule('node:zlib')
+  const frameA = zlib.zstdCompressSync(Buffer.from('{"type":"session","id":"a"}\n'))
+  const frameB = zlib.zstdCompressSync(Buffer.from('{"type":"user/message","seq":0}\n'))
+  const joined = Buffer.concat([frameA, frameB])
+  const frames = scanZstdFrames(joined)
+  assert.equal(frames.length, 2)
+  const text = zstdDecompressAll(joined)
+  assert.ok(text.includes('session') && text.includes('user/message'))
 })
 
 test('computeExitCode implements the 0/1/2 semantics', () => {

@@ -27,6 +27,7 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
 - Node 内置 zstd 可用性
 - 端口 3080 占用情况
 - 关键包重复检查(dsh-tools/dsh-skill/cordis 多副本 = 工具调度崩溃风险,#1849)
+- 会话日志健康抽查(多帧 zstd 帧扫描 + 全量解码,独家检查项)
 
 输出 ok / warn / fail 三态,每项附可执行建议。
 

@@ -13,7 +13,7 @@
  * @module dsh-doctor
  */
 
-import { existsSync, readdirSync, readFileSync, accessSync, constants, realpathSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, accessSync, constants, realpathSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -110,6 +110,136 @@ export function checkProfiles(home) {
   return { name: 'profiles', status, detail: (rows.length > 0 ? rows.join(' ') : '无 profile') + (bad > 0 ? ' [损坏 ' + bad + ']' : '') }
 }
 
+const ZSTD_MAGIC = 0xFD2FB528
+
+/**
+ * Structurally scan a concatenated zstd container (port of the official
+ * dsh-session-persistence-jsonl frame scan). DSH session logs are multi-frame.
+ * @param {Buffer} buffer - compressed bytes.
+ * @returns {Array<{start: number, end: number}>} complete frames in order.
+ */
+export function scanZstdFrames(buffer) {
+  const frames = []
+  let offset = 0
+  while (offset < buffer.length) {
+    const start = offset
+    if (buffer.length - offset < 4) return frames
+    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) {
+      throw new Error('corrupt zstd frame magic at byte ' + offset)
+    }
+    offset += 4
+    if (offset === buffer.length) return frames
+    const descriptor = buffer.readUInt8(offset)
+    offset += 1
+    const contentSizeFlag = descriptor >>> 6
+    const singleSegment = (descriptor & 0x20) !== 0
+    const checksum = (descriptor & 0x04) !== 0
+    const dictionaryFlag = descriptor & 0x03
+    const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag
+    const contentSizeBytes = contentSizeFlag === 0
+      ? (singleSegment ? 1 : 0)
+      : 1 << contentSizeFlag
+    offset += (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes
+    for (;;) {
+      if (buffer.length - offset < 3) return frames
+      const blockHeader = buffer.readUIntLE(offset, 3)
+      offset += 3
+      const lastBlock = (blockHeader & 1) !== 0
+      const blockType = (blockHeader >>> 1) & 0x03
+      const blockSize = blockHeader >>> 3
+      if (blockType === 0x03) throw new Error('reserved zstd block type')
+      const payloadBytes = blockType === 0x01 ? 1 : blockSize
+      if (buffer.length - offset < payloadBytes) return frames
+      offset += payloadBytes
+      if (lastBlock) break
+    }
+    if (checksum) {
+      if (buffer.length - offset < 4) return frames
+      offset += 4
+    }
+    frames.push({ start, end: offset })
+  }
+  return frames
+}
+
+/**
+ * Fully decompress a multi-frame zstd buffer (one-shot decompression stops at
+ * the first frame).
+ * @param {Buffer} bytes - compressed bytes.
+ * @returns {string|null} full plaintext, or null when zstd is unavailable.
+ */
+export function zstdDecompressAll(bytes) {
+  if (!zstdAvailable()) return null
+  const zlib = process.getBuiltinModule('node:zlib')
+  const parts = []
+  for (const frame of scanZstdFrames(bytes)) {
+    parts.push(zlib.zstdDecompressSync(bytes.subarray(frame.start, frame.end)).toString('utf8'))
+  }
+  return parts.join('')
+}
+
+/**
+ * Sample the newest session logs and verify multi-frame zstd health. The
+ * differentiating check: a broken or torn frame usually hides here while the
+ * rest of the environment looks fine.
+ * @param {string} home - DSH home.
+ * @returns {{name: string, status: string, detail: string}} check result.
+ */
+export function checkLogHealth(home) {
+  const dir = join(home, 'sessions')
+  if (!existsSync(dir)) return { name: 'log_health', status: 'ok', detail: '无会话目录' }
+  const logs = []
+  const walk = (d) => {
+    let entries
+    try {
+      entries = readdirSync(d, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      const full = join(d, e.name)
+      if (e.isDirectory()) walk(full)
+      else if (e.name === 'session.jsonl.zstd') {
+        try {
+          logs.push({ path: full, mtime: statSyncFile(full) })
+        } catch {
+          // unreadable candidate
+        }
+      }
+    }
+  }
+  walk(dir)
+  logs.sort((a, b) => b.mtime - a.mtime)
+  if (logs.length === 0) return { name: 'log_health', status: 'ok', detail: '0 个日志' }
+  if (!zstdAvailable()) return { name: 'log_health', status: 'warn', detail: logs.length + ' 个日志,但当前 Node 无内置 zstd,无法解码' }
+  const sample = logs.slice(0, 3)
+  const results = []
+  let bad = 0
+  for (const entry of sample) {
+    try {
+      const bytes = readFileSync(entry.path)
+      const frames = scanZstdFrames(bytes)
+      const text = zstdDecompressAll(bytes)
+      const lines = text.split('\n').filter((l) => l.trim() !== '').length
+      results.push(frames.length + '帧/' + lines + '行')
+    } catch {
+      bad += 1
+      results.push('解码失败')
+    }
+  }
+  return bad > 0
+    ? { name: 'log_health', status: 'fail', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') + ' [' + bad + ' 个损坏]' }
+    : { name: 'log_health', status: 'ok', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') }
+}
+
+function statSyncFile(path) {
+  try {
+    return statSync(path).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
 export function checkSessions(home) {
   const dir = join(home, 'sessions')
   if (!existsSync(dir)) return { name: 'sessions', status: 'warn', detail: dir + ' 不存在(还没有会话)' }
@@ -175,13 +305,15 @@ export function checkDedupe(home) {
   return { name: 'dedupe', status: 'ok', detail: present.length > 0 ? present.join('/') + ' 单一副本' : '未发现关键包' }
 }
 
+/** Whether the runtime ships built-in zstd (Node >= 22.15). */
+export function zstdAvailable() {
+  if (typeof process.getBuiltinModule !== 'function') return false
+  const zlib = process.getBuiltinModule('node:zlib')
+  return zlib !== undefined && typeof zlib.zstdDecompressSync === 'function'
+}
+
 export function checkZstd() {
-  let zstd = false
-  if (typeof process.getBuiltinModule === 'function') {
-    const zlib = process.getBuiltinModule('node:zlib')
-    zstd = zlib !== undefined && typeof zlib.zstdDecompressSync === 'function'
-  }
-  return zstd
+  return zstdAvailable()
     ? { name: 'zstd', status: 'ok', detail: '内置 zstd 可用(可读历史会话)' }
     : { name: 'zstd', status: 'warn', detail: '当前 Node 无内置 zstd;历史会话读取类插件会降级' }
 }
@@ -191,7 +323,7 @@ export function defaultHome() {
 }
 
 export async function runAll(home = defaultHome()) {
-  const sync = [checkNode(), checkPnpm(), checkDsh(), checkDshHome(home), checkProfiles(home), checkSessions(home), checkZstd(), checkDedupe(home)]
+  const sync = [checkNode(), checkPnpm(), checkDsh(), checkDshHome(home), checkProfiles(home), checkSessions(home), checkZstd(), checkDedupe(home), checkLogHealth(home)]
   const port = await checkPort()
   return [...sync, port]
 }
