@@ -196,6 +196,59 @@ export async function runAll(home = defaultHome()) {
   return [...sync, port]
 }
 
+/**
+ * dsh-doctor/v1 exit semantics: 0 all-pass, 1 any warn, 2 any fail.
+ * @param {Array<{status: string}>} checks - runAll output.
+ * @returns {number} exit code.
+ */
+export function computeExitCode(checks) {
+  if (checks.some((c) => c.status === 'fail')) return 2
+  if (checks.some((c) => c.status === 'warn')) return 1
+  return 0
+}
+
+/**
+ * The community dsh-doctor/v1 envelope (aligned with zoahdev and
+ * moonquake2004 implementations; see official discussion #1719).
+ * @param {Array<{name: string, status: string, detail: string}>} checks - runAll output.
+ * @param {string} home - profile/DSH_HOME the checks ran against.
+ * @returns {object} envelope.
+ */
+export function buildEnvelope(checks, home) {
+  const fails = checks.filter((c) => c.status === 'fail').length
+  const warns = checks.filter((c) => c.status === 'warn').length
+  const passes = checks.length - fails - warns
+  return {
+    schema: 'dsh-doctor/v1',
+    generatedAt: new Date().toISOString(),
+    profile: home,
+    exitCode: computeExitCode(checks),
+    summary: { pass: passes, warn: warns, fail: fails },
+    ok: fails === 0,
+    checks,
+  }
+}
+
+function parseArgs(argv) {
+  const args = { json: false, envelope: false, profile: null }
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg === '--json') args.json = true
+    else if (arg === '--envelope') args.envelope = true
+    else if (arg === '--profile') {
+      args.profile = argv[++i]
+      if (!args.profile) {
+        console.error('--profile requires a value')
+        process.exit(2)
+      }
+    } else {
+      console.error('unknown option ' + arg)
+      process.exit(2)
+    }
+  }
+  return args
+}
+
 function render(checks, json) {
   if (json) {
     console.log(JSON.stringify(checks, null, 2))
@@ -216,9 +269,17 @@ function render(checks, json) {
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 if (isMain) {
-  const json = process.argv.includes('--json')
-  runAll().then((checks) => render(checks, json)).catch((error) => {
+  const args = parseArgs(process.argv.slice(2))
+  const home = args.profile ?? defaultHome()
+  runAll(home).then((checks) => {
+    if (args.envelope) {
+      console.log(JSON.stringify(buildEnvelope(checks, home), null, 2))
+    } else {
+      render(checks, args.json)
+    }
+    process.exit(computeExitCode(checks))
+  }).catch((error) => {
     console.error('doctor 自身出错: ' + String(error))
-    process.exit(1)
+    process.exit(2)
   })
 }

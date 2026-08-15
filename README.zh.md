@@ -5,8 +5,16 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
 ## 用法
 
     npx github:ciceroyang/dsh-doctor
-    # 或
-    node doctor.mjs --json
+    node doctor.mjs --json                    # 检查项数组
+    node doctor.mjs --json --envelope         # dsh-doctor/v1 信封(社区统一契约)
+    node doctor.mjs --profile <目录>          # 指定 DSH_HOME/目录
+
+## 社区契约(dsh-doctor/v1)
+
+与 zoahdev、moonquake2004 三方实现对齐(官方讨论 #1719):
+- 信封:`{ schema, generatedAt, profile, exitCode, summary{pass,warn,fail}, ok, checks:[{name,status,detail}] }`
+- status 小写词汇:ok / warn / fail
+- 退出码:0 全过 / 1 有 warn / 2 有 fail
 
 ## 检查项
 

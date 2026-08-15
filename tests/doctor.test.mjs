@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, rmSync, chmodSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkProfiles, checkDshHome, checkZstd, checkNode, checkPort, checkDedupe, runAll } from '../doctor.mjs'
+import { checkProfiles, checkDshHome, checkZstd, checkNode, checkPort, checkDedupe, runAll, computeExitCode, buildEnvelope } from '../doctor.mjs'
 
 const DOCTOR = fileURLToPath(new URL('../doctor.mjs', import.meta.url))
 
@@ -83,6 +83,28 @@ test('runAll returns structured checks for a temp home', async () => {
     assert.ok(['ok', 'warn', 'fail'].includes(c.status))
   }
   rmSync(home, { recursive: true, force: true })
+})
+
+test('computeExitCode implements the 0/1/2 semantics', () => {
+  assert.equal(computeExitCode([{ status: 'ok' }, { status: 'ok' }]), 0)
+  assert.equal(computeExitCode([{ status: 'ok' }, { status: 'warn' }]), 1)
+  assert.equal(computeExitCode([{ status: 'ok' }, { status: 'fail' }]), 2)
+  assert.equal(computeExitCode([]), 0)
+})
+
+test('buildEnvelope emits the dsh-doctor/v1 shape', () => {
+  const checks = [
+    { name: 'node', status: 'ok', detail: '26.4.0' },
+    { name: 'port', status: 'warn', detail: '3080 已被占用' },
+  ]
+  const env = buildEnvelope(checks, '/tmp/home')
+  assert.equal(env.schema, 'dsh-doctor/v1')
+  assert.equal(env.profile, '/tmp/home')
+  assert.equal(env.exitCode, 1)
+  assert.equal(env.ok, true)
+  assert.deepEqual(env.summary, { pass: 1, warn: 1, fail: 0 })
+  assert.equal(env.checks.length, 2)
+  assert.ok(env.generatedAt.endsWith('Z'))
 })
 
 test('CLI renders a JSON report for --json', () => {

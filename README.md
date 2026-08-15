@@ -5,7 +5,16 @@ One-command health check for DeepSeek Harness local environments. A zero-depende
 ## Usage
 
     npx github:ciceroyang/dsh-doctor
-    node doctor.mjs --json
+    node doctor.mjs --json                    # checks array
+    node doctor.mjs --json --envelope         # dsh-doctor/v1 envelope (community contract)
+    node doctor.mjs --profile <dir>           # target a specific DSH_HOME/directory
+
+## Community contract (dsh-doctor/v1)
+
+Aligned with the zoahdev and moonquake2004 implementations (official discussion #1719):
+- envelope: `{ schema, generatedAt, profile, exitCode, summary{pass,warn,fail}, ok, checks:[{name,status,detail}] }`
+- lowercase status vocabulary: ok / warn / fail
+- exit codes: 0 all-pass / 1 any warn / 2 any fail
 
 ## Checks
 
