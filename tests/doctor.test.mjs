@@ -116,8 +116,10 @@ test('CLI renders a JSON report for --json', () => {
   try {
     out = execFileSync(process.execPath, [DOCTOR, '--json'], { encoding: 'utf8', env })
   } catch (error) {
-    // Exit code 1 (a warn) is legitimate, e.g. port 3080 occupied by a GUI.
-    assert.ok(error.status === 1, 'unexpected exit code ' + error.status)
+    // Exit 1 (warn) or 2 (fail) are legitimate environment-dependent outcomes:
+    // CI runners lack pnpm (fail) or built-in zstd on Node 18/20 (warn), and a
+    // local GUI can occupy port 3080 (warn). Assert the report, not the code.
+    assert.ok(error.status === 1 || error.status === 2, 'unexpected exit code ' + error.status)
     out = error.stdout
   }
   const parsed = JSON.parse(out)
