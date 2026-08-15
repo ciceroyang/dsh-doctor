@@ -13,7 +13,7 @@
  * @module dsh-doctor
  */
 
-import { existsSync, readdirSync, readFileSync, accessSync, constants } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, accessSync, constants, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -129,6 +129,52 @@ export function checkSessions(home) {
   return { name: 'sessions', status: 'ok', detail: files + ' 个日志(读取需要 Node ≥ 22.15 内置 zstd)' }
 }
 
+export function checkDedupe(home) {
+  const root = join(home, 'profiles', 'node_modules')
+  if (!existsSync(root)) return { name: 'dedupe', status: 'ok', detail: '无插件依赖目录' }
+  const targets = ['dsh-tools', 'dsh-skill', 'cordis']
+  const locations = new Map() // name -> Set<resolved real path>
+  const record = (name, full) => {
+    let real = full
+    try {
+      real = realpathSync(full)
+    } catch {
+      // unreadable symlink target; record the link path itself
+    }
+    const set = locations.get(name) ?? new Set()
+    set.add(real)
+    locations.set(name, set)
+  }
+  const walk = (dir, depth) => {
+    if (depth > 7) return
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      const full = join(dir, e.name)
+      if (targets.includes(e.name)) {
+        record(e.name, full) // symlinks resolve to their target here
+      }
+      if (e.isDirectory()) walk(full, depth + 1)
+    }
+  }
+  walk(root, 0)
+  const dupes = targets.filter((t) => (locations.get(t)?.size ?? 0) > 1)
+  if (dupes.length > 0) {
+    return {
+      name: 'dedupe',
+      status: 'fail',
+      detail: '关键包多副本并存: ' + dupes.map((d) => d + ' x' + locations.get(d).size).join(', ') +
+        ' — 会导致工具调度崩溃(官方讨论 #1849),运行 dsh plugin --profile <p> dedupe',
+    }
+  }
+  const present = targets.filter((t) => (locations.get(t)?.size ?? 0) === 1)
+  return { name: 'dedupe', status: 'ok', detail: present.length > 0 ? present.join('/') + ' 单一副本' : '未发现关键包' }
+}
+
 export function checkZstd() {
   let zstd = false
   if (typeof process.getBuiltinModule === 'function') {
@@ -145,7 +191,7 @@ export function defaultHome() {
 }
 
 export async function runAll(home = defaultHome()) {
-  const sync = [checkNode(), checkPnpm(), checkDsh(), checkDshHome(home), checkProfiles(home), checkSessions(home), checkZstd()]
+  const sync = [checkNode(), checkPnpm(), checkDsh(), checkDshHome(home), checkProfiles(home), checkSessions(home), checkZstd(), checkDedupe(home)]
   const port = await checkPort()
   return [...sync, port]
 }

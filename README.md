@@ -17,6 +17,7 @@ One-command health check for DeepSeek Harness local environments. A zero-depende
 - session log count (multi-frame zstd health)
 - built-in zstd availability
 - port 3080 availability
+- duplicate critical packages (multiple dsh-tools/dsh-skill/cordis copies = tool-scheduling crash risk, #1849)
 
 Every check reports ok / warn / fail with an actionable fix.
 

@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, rmSync, chmodSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkProfiles, checkDshHome, checkZstd, checkNode, checkPort, runAll } from '../doctor.mjs'
+import { checkProfiles, checkDshHome, checkZstd, checkNode, checkPort, checkDedupe, runAll } from '../doctor.mjs'
 
 const DOCTOR = fileURLToPath(new URL('../doctor.mjs', import.meta.url))
 
@@ -50,6 +50,20 @@ test('checkNode reports ok or warn for the running runtime', () => {
 test('checkPort resolves on an ephemeral port', async () => {
   const result = await checkPort(0)
   assert.equal(result.status, 'ok')
+})
+
+test('checkDedupe flags duplicate real copies', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ddd-'))
+  const base = join(home, 'profiles', 'node_modules', '@deepseek-ai')
+  mkdirSync(join(base, 'dsh-tools'), { recursive: true })
+  mkdirSync(join(home, 'profiles', 'node_modules', 'some-plugin', 'node_modules', '@deepseek-ai', 'dsh-tools'), { recursive: true })
+  const duped = checkDedupe(home)
+  assert.equal(duped.status, 'fail')
+  assert.ok(duped.detail.includes('dsh-tools x2'))
+  rmSync(join(home, 'profiles', 'node_modules', 'some-plugin'), { recursive: true, force: true })
+  const clean = checkDedupe(home)
+  assert.equal(clean.status, 'ok')
+  rmSync(home, { recursive: true, force: true })
 })
 
 test('checkZstd returns a structured result', () => {
