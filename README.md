@@ -17,6 +17,7 @@ Aligned with the zoahdev and moonquake2004 implementations (official discussion 
 - exit codes: 0 all-pass / 1 any warn / 2 any fail (CLI entry point only, see #1719 r4/r5)
 - check-name vocabulary (v1.1 draft, see #1719): `node` / `pnpm` / `dsh` / `ds_home` / `profiles` / `sessions` / `log_health` / `dedupe` / `port` — this implementation already uses the core names
 - the `node` threshold aligns with the repo-declared engines (`^22.19.0 || >=24.0.0`, root package.json); #2259 asks to propagate it into the published manifests
+- vocabulary r5 compatible — drafted by @ciceroyang (this repo), reviewed by @sjh9714 (dsh-win32) and @moonquake2004
 
 ## Checks
 
