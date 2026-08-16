@@ -47,12 +47,11 @@ export function checkNode() {
   const version = parseVersion(run(process.execPath, ['--version']))
   if (!version) return { name: 'node', status: 'fail', detail: '无法执行 node' }
   const [major, minor] = version.split('.').map(Number)
-  if (major < 18) return { name: 'node', status: 'fail', detail: version + ' (< 18,建议升级)' }
   const inRange = (major === 22 && minor >= 19) || major >= 24
   if (!inRange) {
-    return { name: 'node', status: 'warn', detail: version + ' (官方仓库声明 engines: ^22.19.0 || >=24.0.0;低于该范围的部分能力可能异常)' }
+    return { name: 'node', status: 'warn', detail: version + ' (官方仓库声明 engines: ^22.19.0 || >=24.0.0;低于该范围,同 npm EBADENGINE 语义)' }
   }
-  return { name: 'node', status: 'ok', detail: version + ' (在官方 engines 范围内)' }
+  return { name: 'node', status: 'pass', detail: version + ' (在官方 engines 范围内)' }
 }
 
 export function checkPnpm() {
@@ -60,13 +59,13 @@ export function checkPnpm() {
   if (!text) {
     return { name: 'pnpm', status: 'warn', detail: '未安装或不在 PATH(corepack 可免下载启用: corepack enable pnpm;或 npm i -g pnpm)' }
   }
-  return { name: 'pnpm', status: 'ok', detail: text }
+  return { name: 'pnpm', status: 'pass', detail: text }
 }
 
 export function checkDsh() {
   const text = run('dsh', ['--version'])
   if (!text) return { name: 'dsh', status: 'warn', detail: 'PATH 中未找到;可 npx @deepseek-ai/dsh 运行' }
-  return { name: 'dsh', status: 'ok', detail: text }
+  return { name: 'dsh', status: 'pass', detail: text }
 }
 
 export function checkPort(port = DEFAULT_PORT) {
@@ -74,7 +73,7 @@ export function checkPort(port = DEFAULT_PORT) {
     import('node:net').then(({ createServer }) => {
       const server = createServer()
       server.once('error', () => resolve({ name: 'port', status: 'warn', detail: port + ' 已被占用(web GUI 可能已在运行)' }))
-      server.once('listening', () => server.close(() => resolve({ name: 'port', status: 'ok', detail: port + ' 空闲' })))
+      server.once('listening', () => server.close(() => resolve({ name: 'port', status: 'pass', detail: port + ' 空闲' })))
       server.listen(port, '127.0.0.1')
     })
   })
@@ -86,7 +85,7 @@ export function checkDshHome(home) {
   if (!existsSync(settings)) return { name: 'ds_home', status: 'warn', detail: home + ' 存在,但 settings.yaml 缺失' }
   try {
     accessSync(settings, constants.W_OK)
-    return { name: 'ds_home', status: 'ok', detail: settings + ' 可写' }
+    return { name: 'ds_home', status: 'pass', detail: settings + ' 可写' }
   } catch {
     return { name: 'ds_home', status: 'fail', detail: settings + ' 不可写(常见:曾用 sudo 运行;chown 修复)' }
   }
@@ -111,7 +110,7 @@ export function checkProfiles(home) {
       rows.push(name + '(清单损坏)')
     }
   }
-  const status = bad > 0 ? 'warn' : 'ok'
+  const status = bad > 0 ? 'warn' : 'pass'
   return { name: 'profiles', status, detail: (rows.length > 0 ? rows.join(' ') : '无 profile') + (bad > 0 ? ' [损坏 ' + bad + ']' : '') }
 }
 
@@ -192,7 +191,7 @@ export function zstdDecompressAll(bytes) {
  */
 export function checkLogHealth(home) {
   const dir = join(home, 'sessions')
-  if (!existsSync(dir)) return { name: 'log_health', status: 'ok', detail: '无会话目录' }
+  if (!existsSync(dir)) return { name: 'log_health', status: 'pass', detail: '无会话目录' }
   const logs = []
   const walk = (d) => {
     let entries
@@ -215,7 +214,7 @@ export function checkLogHealth(home) {
   }
   walk(dir)
   logs.sort((a, b) => b.mtime - a.mtime)
-  if (logs.length === 0) return { name: 'log_health', status: 'ok', detail: '0 个日志' }
+  if (logs.length === 0) return { name: 'log_health', status: 'pass', detail: '0 个日志' }
   if (!zstdAvailable()) return { name: 'log_health', status: 'warn', detail: logs.length + ' 个日志,但当前 Node 无内置 zstd,无法解码' }
   const sample = logs.slice(0, 3)
   const results = []
@@ -234,7 +233,7 @@ export function checkLogHealth(home) {
   }
   return bad > 0
     ? { name: 'log_health', status: 'fail', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') + ' [' + bad + ' 个损坏]' }
-    : { name: 'log_health', status: 'ok', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') }
+    : { name: 'log_health', status: 'pass', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') }
 }
 
 function statSyncFile(path) {
@@ -260,13 +259,13 @@ export function checkSessions(home) {
   } catch {
     return { name: 'sessions', status: 'fail', detail: '会话目录不可读' }
   }
-  if (files === 0) return { name: 'sessions', status: 'ok', detail: '0 个日志' }
-  return { name: 'sessions', status: 'ok', detail: files + ' 个日志(读取需要 Node ≥ 22.15 内置 zstd)' }
+  if (files === 0) return { name: 'sessions', status: 'pass', detail: '0 个日志' }
+  return { name: 'sessions', status: 'pass', detail: files + ' 个日志(读取需要 Node ≥ 22.15 内置 zstd)' }
 }
 
 export function checkDedupe(home) {
   const root = join(home, 'profiles', 'node_modules')
-  if (!existsSync(root)) return { name: 'dedupe', status: 'ok', detail: '无插件依赖目录' }
+  if (!existsSync(root)) return { name: 'dedupe', status: 'pass', detail: '无插件依赖目录' }
   const targets = ['dsh-tools', 'dsh-skill', 'cordis']
   const locations = new Map() // name -> Set<resolved real path>
   const record = (name, full) => {
@@ -307,7 +306,7 @@ export function checkDedupe(home) {
     }
   }
   const present = targets.filter((t) => (locations.get(t)?.size ?? 0) === 1)
-  return { name: 'dedupe', status: 'ok', detail: present.length > 0 ? present.join('/') + ' 单一副本' : '未发现关键包' }
+  return { name: 'dedupe', status: 'pass', detail: present.length > 0 ? present.join('/') + ' 单一副本' : '未发现关键包' }
 }
 
 /** Whether the runtime ships built-in zstd (Node >= 22.15). */
@@ -319,7 +318,7 @@ export function zstdAvailable() {
 
 export function checkZstd() {
   return zstdAvailable()
-    ? { name: 'zstd', status: 'ok', detail: '内置 zstd 可用(可读历史会话)' }
+    ? { name: 'zstd', status: 'pass', detail: '内置 zstd 可用(可读历史会话)' }
     : { name: 'zstd', status: 'warn', detail: '当前 Node 无内置 zstd;历史会话读取类插件会降级' }
 }
 
@@ -395,13 +394,13 @@ function render(checks, json) {
   console.log('DeepSeek Harness 环境体检 (dsh-doctor)')
   console.log('')
   for (const c of checks) {
-    const emoji = c.status === 'ok' ? '✓' : c.status === 'warn' ? '⚠' : '✗'
+    const emoji = c.status === 'pass' ? '✓' : c.status === 'warn' ? '⚠' : '✗'
     console.log(emoji + ' ' + c.name + ': ' + c.detail)
   }
   const fails = checks.filter((c) => c.status === 'fail').length
   const warns = checks.filter((c) => c.status === 'warn').length
   console.log('')
-  console.log('结果: ' + fails + ' fail / ' + warns + ' warn / ' + (checks.length - fails - warns) + ' ok')
+  console.log('结果: ' + fails + ' fail / ' + warns + ' warn / ' + (checks.length - fails - warns) + ' pass')
   if (fails > 0) console.log('先修 ✗ 项;修完重跑。')
 }
 

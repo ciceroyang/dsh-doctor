@@ -36,20 +36,20 @@ test('checkDshHome detects missing and unwritable states', () => {
   const ok = mkdtempSync(join(tmpdir(), 'ddh2-'))
   writeFileSync(join(ok, 'settings.yaml'), 'x: 1')
   const good = checkDshHome(ok)
-  assert.equal(good.status, 'ok')
+  assert.equal(good.status, 'pass')
   rmSync(base, { recursive: true, force: true })
   rmSync(ok, { recursive: true, force: true })
 })
 
 test('checkNode reports ok or warn for the running runtime', () => {
   const result = checkNode()
-  assert.ok(['ok', 'warn'].includes(result.status))
+  assert.ok(['pass', 'warn'].includes(result.status))
   assert.ok(result.detail.length > 0)
 })
 
 test('checkPort resolves on an ephemeral port', async () => {
   const result = await checkPort(0)
-  assert.equal(result.status, 'ok')
+  assert.equal(result.status, 'pass')
 })
 
 test('checkDedupe flags duplicate real copies', () => {
@@ -62,13 +62,13 @@ test('checkDedupe flags duplicate real copies', () => {
   assert.ok(duped.detail.includes('dsh-tools x2'))
   rmSync(join(home, 'profiles', 'node_modules', 'some-plugin'), { recursive: true, force: true })
   const clean = checkDedupe(home)
-  assert.equal(clean.status, 'ok')
+  assert.equal(clean.status, 'pass')
   rmSync(home, { recursive: true, force: true })
 })
 
 test('checkZstd returns a structured result', () => {
   const result = checkZstd()
-  assert.ok(['ok', 'warn'].includes(result.status))
+  assert.ok(['pass', 'warn'].includes(result.status))
   assert.equal(result.name, 'zstd')
 })
 
@@ -80,7 +80,7 @@ test('runAll returns structured checks for a temp home', async () => {
   assert.ok(Array.isArray(checks) && checks.length >= 6)
   for (const c of checks) {
     assert.ok(typeof c.name === 'string' && typeof c.detail === 'string')
-    assert.ok(['ok', 'warn', 'fail'].includes(c.status))
+    assert.ok(['pass', 'warn', 'fail', 'skip'].includes(c.status))
   }
   rmSync(home, { recursive: true, force: true })
 })
@@ -93,7 +93,7 @@ test('scanZstdFrames rejects corrupt magic', () => {
 test('checkLogHealth handles an empty sessions dir', () => {
   const home = mkdtempSync(join(tmpdir(), 'ddl-'))
   const result = checkLogHealth(home)
-  assert.equal(result.status, 'ok')
+  assert.equal(result.status, 'pass')
   assert.equal(result.name, 'log_health')
   rmSync(home, { recursive: true, force: true })
 })
@@ -114,16 +114,16 @@ test('multi-frame zstd roundtrip decodes fully (skipped without zstd)', (t) => {
 })
 
 test('computeExitCode implements the 0/1/2 semantics with skip', () => {
-  assert.equal(computeExitCode([{ status: 'ok' }, { status: 'ok' }]), 0)
-  assert.equal(computeExitCode([{ status: 'ok' }, { status: 'warn' }]), 1)
-  assert.equal(computeExitCode([{ status: 'ok' }, { status: 'fail' }]), 2)
-  assert.equal(computeExitCode([{ status: 'skip' }, { status: 'ok' }]), 0)
+  assert.equal(computeExitCode([{ status: 'pass' }, { status: 'pass' }]), 0)
+  assert.equal(computeExitCode([{ status: 'pass' }, { status: 'warn' }]), 1)
+  assert.equal(computeExitCode([{ status: 'pass' }, { status: 'fail' }]), 2)
+  assert.equal(computeExitCode([{ status: 'skip' }, { status: 'pass' }]), 0)
   assert.equal(computeExitCode([]), 0)
 })
 
 test('buildEnvelope emits the dsh-doctor/v1 shape', () => {
   const checks = [
-    { name: 'node', status: 'ok', detail: '26.4.0' },
+    { name: 'node', status: 'pass', detail: '26.4.0' },
     { name: 'port', status: 'warn', detail: '3080 已被占用' },
   ]
   const env = buildEnvelope(checks, '/tmp/home')
@@ -135,7 +135,7 @@ test('buildEnvelope emits the dsh-doctor/v1 shape', () => {
   assert.equal(env.checks.length, 2)
   assert.ok(env.generatedAt.endsWith('Z'))
 
-  const withSkip = buildEnvelope([{ name: 'win', status: 'skip', detail: 'win32 only' }, { name: 'node', status: 'ok', detail: 'v22' }], '/tmp/home')
+  const withSkip = buildEnvelope([{ name: 'win', status: 'skip', detail: 'win32 only' }, { name: 'node', status: 'pass', detail: 'v22' }], '/tmp/home')
   assert.deepEqual(withSkip.summary, { pass: 1, warn: 0, fail: 0, skip: 1 })
   assert.equal(withSkip.exitCode, 0)
   assert.equal(withSkip.ok, true)

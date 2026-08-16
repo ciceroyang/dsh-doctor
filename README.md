@@ -13,8 +13,8 @@ One-command health check for DeepSeek Harness local environments. A zero-depende
 
 Aligned with the zoahdev and moonquake2004 implementations (official discussion #1719):
 - envelope: `{ schema, generatedAt, profile, exitCode, summary{pass,warn,fail}, ok, checks:[{name,status,detail}] }`
-- lowercase status vocabulary: ok / warn / fail
-- exit codes: 0 all-pass / 1 any warn / 2 any fail
+- status literals: `pass` / `warn` / `fail` / `skip` (r5; the `ok` literal is retired, the top-level boolean stays `ok`)
+- exit codes: 0 all-pass / 1 any warn / 2 any fail (CLI entry point only, see #1719 r4/r5)
 - check-name vocabulary (v1.1 draft, see #1719): `node` / `pnpm` / `dsh` / `ds_home` / `profiles` / `sessions` / `log_health` / `dedupe` / `port` — this implementation already uses the core names
 - the `node` threshold aligns with the repo-declared engines (`^22.19.0 || >=24.0.0`, root package.json); #2259 asks to propagate it into the published manifests
 
