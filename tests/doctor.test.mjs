@@ -113,10 +113,11 @@ test('multi-frame zstd roundtrip decodes fully (skipped without zstd)', (t) => {
   assert.ok(text.includes('session') && text.includes('user/message'))
 })
 
-test('computeExitCode implements the 0/1/2 semantics', () => {
+test('computeExitCode implements the 0/1/2 semantics with skip', () => {
   assert.equal(computeExitCode([{ status: 'ok' }, { status: 'ok' }]), 0)
   assert.equal(computeExitCode([{ status: 'ok' }, { status: 'warn' }]), 1)
   assert.equal(computeExitCode([{ status: 'ok' }, { status: 'fail' }]), 2)
+  assert.equal(computeExitCode([{ status: 'skip' }, { status: 'ok' }]), 0)
   assert.equal(computeExitCode([]), 0)
 })
 
@@ -130,9 +131,14 @@ test('buildEnvelope emits the dsh-doctor/v1 shape', () => {
   assert.equal(env.profile, '/tmp/home')
   assert.equal(env.exitCode, 1)
   assert.equal(env.ok, true)
-  assert.deepEqual(env.summary, { pass: 1, warn: 1, fail: 0 })
+  assert.deepEqual(env.summary, { pass: 1, warn: 1, fail: 0, skip: 0 })
   assert.equal(env.checks.length, 2)
   assert.ok(env.generatedAt.endsWith('Z'))
+
+  const withSkip = buildEnvelope([{ name: 'win', status: 'skip', detail: 'win32 only' }, { name: 'node', status: 'ok', detail: 'v22' }], '/tmp/home')
+  assert.deepEqual(withSkip.summary, { pass: 1, warn: 0, fail: 0, skip: 1 })
+  assert.equal(withSkip.exitCode, 0)
+  assert.equal(withSkip.ok, true)
 })
 
 test('CLI renders a JSON report for --json', () => {

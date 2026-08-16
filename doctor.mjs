@@ -336,7 +336,7 @@ export async function runAll(home = defaultHome()) {
 export function computeExitCode(checks) {
   if (checks.some((c) => c.status === 'fail')) return 2
   if (checks.some((c) => c.status === 'warn')) return 1
-  return 0
+  return 0 // 'skip' counts as neither pass nor fail
 }
 
 /**
@@ -349,13 +349,14 @@ export function computeExitCode(checks) {
 export function buildEnvelope(checks, home) {
   const fails = checks.filter((c) => c.status === 'fail').length
   const warns = checks.filter((c) => c.status === 'warn').length
-  const passes = checks.length - fails - warns
+  const skips = checks.filter((c) => c.status === 'skip').length
+  const passes = checks.length - fails - warns - skips
   return {
     schema: 'dsh-doctor/v1',
     generatedAt: new Date().toISOString(),
     profile: home,
     exitCode: computeExitCode(checks),
-    summary: { pass: passes, warn: warns, fail: fails },
+    summary: { pass: passes, warn: warns, fail: fails, skip: skips },
     ok: fails === 0,
     checks,
   }
