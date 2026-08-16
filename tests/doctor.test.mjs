@@ -22,7 +22,7 @@ test('checkProfiles skips shared dirs and flags corrupt manifests', () => {
   writeFileSync(join(home, 'profiles', 'good', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['a', 'b'] } } }))
   writeFileSync(join(home, 'profiles', 'bad', 'package.json'), '{broken json')
   const result = checkProfiles(home)
-  assert.ok(result.detail.includes('good(2 bundles)'))
+  assert.ok(result.detail.includes('good(2 bundles, 无应用组合包)'))
   assert.ok(result.detail.includes('bad(清单损坏)'))
   assert.ok(!result.detail.includes('shared'))
   assert.equal(result.status, 'warn')

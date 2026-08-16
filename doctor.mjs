@@ -97,6 +97,7 @@ export function checkProfiles(home) {
   const entries = readdirSync(dir).filter((e) => !e.startsWith('.'))
   const rows = []
   let bad = 0
+  let appLess = 0
   for (const name of entries) {
     const pkgFile = join(dir, name, 'package.json')
     if (!existsSync(pkgFile)) continue // shared dirs like node_modules are not profiles
@@ -104,14 +105,22 @@ export function checkProfiles(home) {
       const pkg = JSON.parse(readFileSync(pkgFile, 'utf8'))
       const bundles = pkg?.dsh?.profile?.bundles
       if (!Array.isArray(bundles)) throw new Error('no bundles')
-      rows.push(name + '(' + bundles.length + ' bundles)')
+      const appBundle = bundles.some((b) => /(web-app|headless|tui|app)/.test(b))
+      rows.push(name + '(' + bundles.length + ' bundles' + (appBundle ? '' : ', 无应用组合包') + ')')
+      if (!appBundle) appLess += 1
     } catch {
       bad += 1
       rows.push(name + '(清单损坏)')
     }
   }
-  const status = bad > 0 ? 'warn' : 'pass'
-  return { name: 'profiles', status, detail: (rows.length > 0 ? rows.join(' ') : '无 profile') + (bad > 0 ? ' [损坏 ' + bad + ']' : '') }
+  const status = bad > 0 || appLess > 0 ? 'warn' : 'pass'
+  return {
+    name: 'profiles',
+    status,
+    detail: (rows.length > 0 ? rows.join(' ') : '无 profile') +
+      (bad > 0 ? ' [损坏 ' + bad + ']' : '') +
+      (appLess > 0 ? ' [无应用组合包的 profile 直接启动会挂起,#2321]' : ''),
+  }
 }
 
 const ZSTD_MAGIC = 0xFD2FB528
