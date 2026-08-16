@@ -46,10 +46,13 @@ function parseVersion(text, prefix) {
 export function checkNode() {
   const version = parseVersion(run(process.execPath, ['--version']))
   if (!version) return { name: 'node', status: 'fail', detail: '无法执行 node' }
-  const major = Number(version.split('.')[0])
+  const [major, minor] = version.split('.').map(Number)
   if (major < 18) return { name: 'node', status: 'fail', detail: version + ' (< 18,建议升级)' }
-  if (major < 22) return { name: 'node', status: 'warn', detail: version + ' (≥22.15 才支持读取历史会话日志)' }
-  return { name: 'node', status: 'ok', detail: version }
+  const inRange = (major === 22 && minor >= 19) || major >= 24
+  if (!inRange) {
+    return { name: 'node', status: 'warn', detail: version + ' (官方仓库声明 engines: ^22.19.0 || >=24.0.0;低于该范围的部分能力可能异常)' }
+  }
+  return { name: 'node', status: 'ok', detail: version + ' (在官方 engines 范围内)' }
 }
 
 export function checkPnpm() {

@@ -16,6 +16,7 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
 - status 小写词汇:ok / warn / fail
 - 退出码:0 全过 / 1 有 warn / 2 有 fail
 - 检查名词汇表(v1.1 草案,见 #1719):`node` / `pnpm` / `dsh` / `ds_home` / `profiles` / `sessions` / `log_health` / `dedupe` / `port` —— 本实现已全部使用核心名
+- `node` 阈值对齐官方仓库根 package.json 声明的 engines(`^22.19.0 || >=24.0.0`);#2259 在推进该声明传播进发布包
 
 ## 检查项
 
