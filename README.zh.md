@@ -15,6 +15,7 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
 - 信封:`{ schema, generatedAt, profile, exitCode, summary{pass,warn,fail}, ok, checks:[{name,status,detail}] }`
 - status 小写词汇:ok / warn / fail
 - 退出码:0 全过 / 1 有 warn / 2 有 fail
+- 检查名词汇表(v1.1 草案,见 #1719):`node` / `pnpm` / `dsh` / `ds_home` / `profiles` / `sessions` / `log_health` / `dedupe` / `port` —— 本实现已全部使用核心名
 
 ## 检查项
 

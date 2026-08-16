@@ -15,6 +15,7 @@ Aligned with the zoahdev and moonquake2004 implementations (official discussion 
 - envelope: `{ schema, generatedAt, profile, exitCode, summary{pass,warn,fail}, ok, checks:[{name,status,detail}] }`
 - lowercase status vocabulary: ok / warn / fail
 - exit codes: 0 all-pass / 1 any warn / 2 any fail
+- check-name vocabulary (v1.1 draft, see #1719): `node` / `pnpm` / `dsh` / `ds_home` / `profiles` / `sessions` / `log_health` / `dedupe` / `port` — this implementation already uses the core names
 
 ## Checks
 
