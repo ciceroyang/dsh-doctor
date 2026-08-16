@@ -57,7 +57,9 @@ export function checkNode() {
 
 export function checkPnpm() {
   const text = run('pnpm', ['--version'])
-  if (!text) return { name: 'pnpm', status: 'fail', detail: '未安装或不在 PATH(dsh plugin 需要;npm i -g pnpm)' }
+  if (!text) {
+    return { name: 'pnpm', status: 'warn', detail: '未安装或不在 PATH(corepack 可免下载启用: corepack enable pnpm;或 npm i -g pnpm)' }
+  }
   return { name: 'pnpm', status: 'ok', detail: text }
 }
 
