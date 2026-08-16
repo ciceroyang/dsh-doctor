@@ -18,6 +18,7 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
 - 检查名词汇表(v1.1 草案,见 #1719):`node` / `pnpm` / `dsh` / `ds_home` / `profiles` / `sessions` / `log_health` / `dedupe` / `port` —— 本实现已全部使用核心名
 - `node` 阈值对齐官方仓库根 package.json 声明的 engines(`^22.19.0 || >=24.0.0`);#2259 在推进该声明传播进发布包
 - 词汇表 r5 兼容 — 起草:@ciceroyang(本仓库),评审:@sjh9714(dsh-win32)、@moonquake2004
+- 规范全文见 [docs/contract-v1.md](docs/contract-v1.md)(冻结文本,可引用)
 
 ## 检查项
 
