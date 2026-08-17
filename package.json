@@ -1,6 +1,6 @@
 {
   "name": "dsh-doctor",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "One-command health check for DeepSeek Harness local environments (node/pnpm/dsh, port, DSH_HOME, profiles, session logs, zstd)",
   "type": "module",
   "bin": {

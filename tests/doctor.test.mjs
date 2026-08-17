@@ -153,6 +153,12 @@ test('buildEnvelope emits the dsh-doctor/v1 shape', () => {
   assert.deepEqual(withSkip.summary, { pass: 1, warn: 0, fail: 0, skip: 1 })
   assert.equal(withSkip.exitCode, 0)
   assert.equal(withSkip.ok, true)
+
+  // Frozen r5 shape: remediation is opt-in and absent by default.
+  assert.equal('remediation' in withSkip, false)
+  const withFix = buildEnvelope([{ name: 'pnpm', status: 'warn', detail: 'x' }], '/tmp/home', { remediation: true })
+  assert.ok(Array.isArray(withFix.remediation))
+  assert.ok(withFix.remediation[0].startsWith('[pnpm]'))
 })
 
 test('CLI renders a JSON report for --json', () => {

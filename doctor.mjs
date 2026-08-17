@@ -359,12 +359,12 @@ export function computeExitCode(checks) {
  * @param {string} home - profile/DSH_HOME the checks ran against.
  * @returns {object} envelope.
  */
-export function buildEnvelope(checks, home) {
+export function buildEnvelope(checks, home, opts = {}) {
   const fails = checks.filter((c) => c.status === 'fail').length
   const warns = checks.filter((c) => c.status === 'warn').length
   const skips = checks.filter((c) => c.status === 'skip').length
   const passes = checks.length - fails - warns - skips
-  return {
+  const envelope = {
     schema: 'dsh-doctor/v1',
     generatedAt: new Date().toISOString(),
     profile: home,
@@ -373,14 +373,21 @@ export function buildEnvelope(checks, home) {
     ok: fails === 0,
     checks,
   }
+  // Opt-in extension, nominated as a v1.1 vocabulary field in #1719; the
+  // frozen r5 envelope never emits it unless the caller asks.
+  if (opts.remediation === true) {
+    envelope.remediation = buildRemediation(checks)
+  }
+  return envelope
 }
 
 function parseArgs(argv) {
-  const args = { json: false, envelope: false, profile: null }
+  const args = { json: false, envelope: false, profile: null, remediation: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--json') args.json = true
     else if (arg === '--envelope') args.envelope = true
+    else if (arg === '--remediation') args.remediation = true
     else if (arg === '--profile') {
       args.profile = argv[++i]
       if (!args.profile) {
@@ -453,7 +460,7 @@ if (isMain) {
   const home = args.profile ?? defaultHome()
   runAll(home).then((checks) => {
     if (args.envelope) {
-      console.log(JSON.stringify(buildEnvelope(checks, home), null, 2))
+      console.log(JSON.stringify(buildEnvelope(checks, home, { remediation: args.remediation }), null, 2))
     } else {
       render(checks, args.json)
     }
