@@ -18,7 +18,7 @@ Aligned with the zoahdev and moonquake2004 implementations (official discussion 
 - check-name vocabulary (v1.1 draft, see #1719): `node` / `pnpm` / `dsh` / `ds_home` / `profiles` / `sessions` / `log_health` / `dedupe` / `port` — this implementation already uses the core names
 - the `node` threshold aligns with the repo-declared engines (`^22.19.0 || >=24.0.0`, root package.json); #2259 asks to propagate it into the published manifests
 - vocabulary r5 compatible — drafted by @ciceroyang (this repo), reviewed by @sjh9714 (dsh-win32) and @moonquake2004
-- the full frozen spec lives at [docs/contract-v1.md](docs/contract-v1.md)
+- the full frozen spec lives at [docs/contract-v1.md](docs/contract-v1.md) (English) / [docs/contract-v1.zh.md](docs/contract-v1.zh.md) (中文)
 
 ## Checks
 
