@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, rmSync, chmodSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkProfiles, checkDshHome, checkZstd, checkNode, checkPort, checkDedupe, checkLogHealth, scanZstdFrames, zstdDecompressAll, zstdAvailable, runAll, computeExitCode, buildEnvelope } from '../doctor.mjs'
+import { checkProfiles, checkDshHome, checkZstd, checkNode, checkPort, checkDedupe, checkLogHealth, scanZstdFrames, zstdDecompressAll, zstdAvailable, runAll, computeExitCode, buildEnvelope, buildRemediation } from '../doctor.mjs'
 
 const DOCTOR = fileURLToPath(new URL('../doctor.mjs', import.meta.url))
 
@@ -111,6 +111,20 @@ test('multi-frame zstd roundtrip decodes fully (skipped without zstd)', (t) => {
   assert.equal(frames.length, 2)
   const text = zstdDecompressAll(joined)
   assert.ok(text.includes('session') && text.includes('user/message'))
+})
+
+test('buildRemediation emits fix lines only for warn/fail checks', () => {
+  const checks = [
+    { name: 'node', status: 'pass', detail: 'x' },
+    { name: 'pnpm', status: 'warn', detail: 'x' },
+    { name: 'port', status: 'fail', detail: 'x' },
+    { name: 'git_bash', status: 'skip', detail: 'win32 only' },
+    { name: 'unknown_check', status: 'warn', detail: 'x' },
+  ]
+  const lines = buildRemediation(checks)
+  assert.equal(lines.length, 2)
+  assert.ok(lines[0].startsWith('[pnpm]'))
+  assert.ok(lines[1].startsWith('[port]'))
 })
 
 test('computeExitCode implements the 0/1/2 semantics with skip', () => {

@@ -395,6 +395,34 @@ function parseArgs(argv) {
   return args
 }
 
+const REMEDIATIONS = {
+  node: '升级 Node 到官方范围 ^22.19.0 || >=24.0.0(nvm install 22 或安装包升级)',
+  pnpm: 'npm install -g pnpm(国内网络加 --registry=https://registry.npmmirror.com)',
+  dsh: 'npm install -g @deepseek-ai/dsh,或使用 npx @deepseek-ai/dsh',
+  ds_home: 'sudo chown $(whoami) <DSH_HOME 下被 root 占用的文件>,或删除重建 settings.yaml',
+  profiles: '无应用组合包的 profile 启动会挂起(#2321): dsh plugin --profile <name> add @deepseek-ai/dsh-headless',
+  sessions: '检查 DSH_HOME 指向与目录权限',
+  log_health: '会话日志损坏:参考官方讨论 #1043,或社区工具 dsh-session-health 做帧级诊断',
+  dedupe: 'dsh plugin --profile <p> dedupe;仍有多副本则卸载重装相关插件(#1849)',
+  port: 'dsh --profile web --port <其他端口> 换端口启动',
+}
+
+/**
+ * Human-mode remediation lines for every failing/warning check.
+ * Kept out of the JSON envelope so the frozen r5 shape stays untouched.
+ * @param {Array<{name: string, status: string}>} checks - runAll output.
+ * @returns {string[]} actionable fix lines.
+ */
+export function buildRemediation(checks) {
+  const lines = []
+  for (const c of checks) {
+    if (c.status === 'pass' || c.status === 'skip') continue
+    const fix = REMEDIATIONS[c.name]
+    if (fix) lines.push('[' + c.name + '] ' + fix)
+  }
+  return lines
+}
+
 function render(checks, json) {
   if (json) {
     console.log(JSON.stringify(checks, null, 2))
@@ -410,6 +438,12 @@ function render(checks, json) {
   const warns = checks.filter((c) => c.status === 'warn').length
   console.log('')
   console.log('结果: ' + fails + ' fail / ' + warns + ' warn / ' + (checks.length - fails - warns) + ' pass')
+  const remediations = buildRemediation(checks)
+  if (remediations.length > 0) {
+    console.log('')
+    console.log('修复建议:')
+    for (const line of remediations) console.log('  ' + line)
+  }
   if (fails > 0) console.log('先修 ✗ 项;修完重跑。')
 }
 
