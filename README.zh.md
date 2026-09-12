@@ -2,6 +2,8 @@
 
 DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落地实现(零依赖)。
 
+> 状态:可用。当前版本请以 [Releases](https://github.com/ciceroyang/dsh-doctor/releases) 为准。本项目是面向 DeepSeek Harness 开发者预览版的独立社区工具,接口可能变化。
+
 ## 用法
 
     npx github:ciceroyang/dsh-doctor

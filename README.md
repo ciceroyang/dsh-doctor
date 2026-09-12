@@ -2,6 +2,8 @@
 
 One-command health check for DeepSeek Harness local environments. A zero-dependency implementation of the community-requested "dsh doctor" idea (official Discussions #1719).
 
+> Status: usable. See [Releases](https://github.com/ciceroyang/dsh-doctor/releases) for the current version. This is an independent community tool for the DeepSeek Harness developer preview; interfaces may change.
+
 ## Usage
 
     npx github:ciceroyang/dsh-doctor
