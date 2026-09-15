@@ -33,7 +33,7 @@ Aligned with the zoahdev and moonquake2004 implementations (official discussion 
 - built-in zstd availability
 - port 3080 availability
 - duplicate critical packages (multiple dsh-tools/dsh-skill/cordis copies = tool-scheduling crash risk, #1849)
-- session-log health sampling (multi-frame zstd frame scan + full decode — the differentiating check)
+- session-log health sampling (multi-frame zstd frame scan + full decode — the differentiating check), including the #6651 first-frame condition (the first frame must be exactly one `session` header line; violating it decodes fine but blocks `dsh web` startup and empties session listings)
 
 Every check reports ok / warn / fail with an actionable fix.
 

@@ -176,6 +176,38 @@ export function scanZstdFrames(buffer) {
 }
 
 /**
+ * Reproduce the enforced condition from dsh-session-persistence-jsonl: the first
+ * zstd frame's plaintext must be exactly one line (its only newline is the last
+ * byte) and that line must be the session header. A violation is the failure mode
+ * reported in discussion #6651: the log decodes fine, but `dsh web` refuses to
+ * start and session listings come back empty.
+ * @param {Buffer} bytes - the whole session log.
+ * @returns {string|null} human-readable issue, or null when the header frame is valid.
+ */
+export function headerFrameIssue(bytes) {
+  if (!zstdAvailable()) return null
+  const frames = scanZstdFrames(bytes)
+  if (frames.length === 0) return '没有完整帧'
+  const zlib = process.getBuiltinModule('node:zlib')
+  let first
+  try {
+    first = zlib.zstdDecompressSync(bytes.subarray(frames[0].start, frames[0].end)).toString('utf8')
+  } catch {
+    return '首帧无法解码'
+  }
+  if (first.length === 0) return '首帧为空'
+  if (first.indexOf('\n') !== first.length - 1) return '首帧不是恰好一行(#6651 会让 dsh web 启动/会话列表整体失败)'
+  let parsed
+  try {
+    parsed = JSON.parse(first.slice(0, -1))
+  } catch {
+    return '首行不是 JSON'
+  }
+  if (!parsed || parsed.type !== 'session') return '首行不是 session header(type=' + String(parsed && parsed.type) + ')'
+  return null
+}
+
+/**
  * Fully decompress a multi-frame zstd buffer (one-shot decompression stops at
  * the first frame).
  * @param {Buffer} bytes - compressed bytes.
@@ -228,21 +260,32 @@ export function checkLogHealth(home) {
   const sample = logs.slice(0, 3)
   const results = []
   let bad = 0
+  let headerIssues = 0
   for (const entry of sample) {
     try {
       const bytes = readFileSync(entry.path)
       const frames = scanZstdFrames(bytes)
       const text = zstdDecompressAll(bytes)
       const lines = text.split('\n').filter((l) => l.trim() !== '').length
-      results.push(frames.length + '帧/' + lines + '行')
+      const issue = headerFrameIssue(bytes)
+      if (issue) {
+        headerIssues += 1
+        results.push(frames.length + '帧/' + lines + '行 [首帧异常:' + issue + ']')
+      } else {
+        results.push(frames.length + '帧/' + lines + '行')
+      }
     } catch {
       bad += 1
       results.push('解码失败')
     }
   }
-  return bad > 0
-    ? { name: 'log_health', status: 'fail', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') + ' [' + bad + ' 个损坏]' }
-    : { name: 'log_health', status: 'pass', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') }
+  if (bad > 0) {
+    return { name: 'log_health', status: 'fail', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') + ' [' + bad + ' 个损坏]' }
+  }
+  if (headerIssues > 0) {
+    return { name: 'log_health', status: 'fail', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') + ' [' + headerIssues + ' 个首帧异常]' }
+  }
+  return { name: 'log_health', status: 'pass', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') }
 }
 
 function statSyncFile(path) {

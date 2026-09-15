@@ -41,7 +41,7 @@
 | `ds_home` | DSH_HOME 存在 + settings.yaml 可写 | pass;缺 settings warn;不可写 fail | #1027 |
 | `profiles` | profile 清单可解析 | pass;无应用组合包(启动挂起)/损坏条目 warn | #964、#2321 |
 | `sessions` | 会话日志可枚举 | pass;缺失/不可读 warn | - |
-| `log_health` | zstd 容器结构 + 可解码性(多帧扫描+解码) | pass;坏帧/解码失败 fail | #1043 |
+| `log_health` | zstd 容器结构 + 可解码性(多帧扫描+解码;首帧必须恰好一行 header) | pass;坏帧/解码失败/首帧违规都 fail(#6651) | #1043、#6651 |
 | `dedupe` | 关键包单副本(cordis/dsh-tools/dsh-skill) | pass;多副本 fail | #1849 |
 | `port` | 默认端口可用 | 空闲 pass;被占 warn | - |
 
@@ -50,6 +50,8 @@
 1. 未入词汇表的检查保留厂商前缀的本地 id,直到提名。
 2. 新名字通过四元组入表;CI 只按 name + status 断言,`detail` 保持自由文本。
 3. `schema` 恒为 `"dsh-doctor/v1"`;词汇增补不升版本。
+
+`log_health` 另外强制 #6651 报告的首帧条件:第一个 zstd 帧的明文必须恰好一行,且该行必须是 `type: session` 的 header。违反该条件的日志能正常解码,却会让 `dsh web` 拒绝启动、会话列表返回空,因此该检查报 `fail` 并在 `detail` 里写明原因(dsh-doctor 0.5.3 加入;信封、状态集合与检查词汇表均不变)。
 
 ## v1.1 增补:可选信封字段 `remediation`(三方 +1 通过)
 

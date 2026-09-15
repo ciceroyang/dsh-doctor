@@ -47,7 +47,7 @@ Each entry is a four-tuple (name, semantic, status, provenance).
 | `ds_home` | DSH_HOME exists + settings.yaml writable | pass; warn settings missing; fail not writable | #1027 |
 | `profiles` | profile manifests parse | pass; warn app-less profile (boot hang) / corrupt entries | #964, #2321 |
 | `sessions` | session logs enumerable | pass; warn missing/unreadable | - |
-| `log_health` | zstd container structure + decodeability (multi-frame scan + decode) | pass; fail bad frames / decode failure | #1043 |
+| `log_health` | zstd container structure + decodeability (multi-frame scan + decode; first frame must be exactly one header line) | pass; fail bad frames / decode failure / header-frame violation (#6651) | #1043, #6651 |
 | `dedupe` | critical packages single-copy (cordis/dsh-tools/dsh-skill) | pass; fail multi-copy | #1849 |
 | `port` | default port availability | pass free; warn occupied | - |
 
@@ -57,6 +57,8 @@ Each entry is a four-tuple (name, semantic, status, provenance).
 2. New names enter through the four-tuple; CI asserts on name + status only —
    `detail` stays free text.
 3. `schema` remains `"dsh-doctor/v1"`; vocabulary amendments do not bump it.
+
+`log_health` additionally enforces the first-frame condition reported in #6651: the first zstd frame's plaintext must be exactly one line, and that line must be the `type: session` header. A log that violates it decodes fine yet makes `dsh web` refuse to start and returns empty session listings, so the check reports `fail` with the reason in `detail` (added in dsh-doctor 0.5.3; envelope, status set and check vocabulary unchanged).
 
 ## v1.1 addendum: optional envelope field `remediation` (ADOPTED, three +1s)
 
