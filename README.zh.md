@@ -11,6 +11,7 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
     node doctor.mjs --json --envelope         # dsh-doctor/v1 信封(社区统一契约)
     node doctor.mjs --profile <目录>          # 指定 DSH_HOME/目录
     node doctor.mjs --all-logs                # 全库扫描会话日志(默认只抽样最新的 3 个)
+    node doctor.mjs --strict-peer             # 把「插件未声明兼容范围」提升为 warning
 
 ## 社区契约(dsh-doctor/v1)
 
@@ -35,6 +36,7 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
 - 端口 3080 占用情况
 - 关键包重复检查(dsh-tools/dsh-skill/cordis 多副本 = 工具调度崩溃风险,#1849)
 - 会话日志健康抽查(多帧 zstd 帧扫描 + 全量解码,独家检查项),含 #6651 的首帧条件(首帧必须恰好一行 `session` header;违反时日志能正常解码,却会阻断 `dsh web` 启动并使会话列表为空)。`--all-logs` 改为全库扫描(默认只抽样最新 3 个),避免唯一那个坏日志落在抽样之外
+- 已装插件兼容性(`ciceroyang/peer_range`,按契约规则 1 使用厂商前缀本地 id):对每个 profile `dependencies` 里的插件,把它声明的 `@deepseek-ai/*` peer 范围与磁盘上实际安装的 host 版本比对,完全离线。三态:兼容 / 不兼容 / 未知(`*`、未声明、无法解析、rc 语义无法判定);未知只报未知、绝不当作兼容,`--strict-peer` 可把它升级为 warning。这是 #4792 插件 × harness 兼容性问题的离线一半
 
 输出 ok / warn / fail 三态,每项附可执行建议。
 

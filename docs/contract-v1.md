@@ -58,6 +58,8 @@ Each entry is a four-tuple (name, semantic, status, provenance).
    `detail` stays free text.
 3. `schema` remains `"dsh-doctor/v1"`; vocabulary amendments do not bump it.
 
+Rule 1 in practice: `ciceroyang/peer_range` is a vendor-local check (installed plugin `@deepseek-ai/*` peer ranges vs the host versions on disk) added in 0.6.0. It is not in the core vocabulary; consumers that switch on check names must ignore unknown ones. The `node` / `pnpm` / `dsh` / `ds_home` / `profiles` / `sessions` / `log_health` / `dedupe` / `port` set and the envelope shape are unchanged.
+
 `log_health` additionally enforces the first-frame condition reported in #6651: the first zstd frame's plaintext must be exactly one line, and that line must be the `type: session` header. A log that violates it decodes fine yet makes `dsh web` refuse to start and returns empty session listings, so the check reports `fail` with the reason in `detail` (added in dsh-doctor 0.5.3; envelope, status set and check vocabulary unchanged).
 
 ## v1.1 addendum: optional envelope field `remediation` (ADOPTED, three +1s)

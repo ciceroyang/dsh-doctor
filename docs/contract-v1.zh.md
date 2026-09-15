@@ -51,6 +51,8 @@
 2. 新名字通过四元组入表;CI 只按 name + status 断言,`detail` 保持自由文本。
 3. `schema` 恒为 `"dsh-doctor/v1"`;词汇增补不升版本。
 
+规则 1 的实例:`ciceroyang/peer_range` 是 0.6.0 加入的厂商本地检查(已装插件的 `@deepseek-ai/*` peer 范围 vs 磁盘上实际 host 版本),不在核心词汇表内;按检查名分支的消费者必须忽略不认识的名字。九个核心名与信封形状均未变。
+
 `log_health` 另外强制 #6651 报告的首帧条件:第一个 zstd 帧的明文必须恰好一行,且该行必须是 `type: session` 的 header。违反该条件的日志能正常解码,却会让 `dsh web` 拒绝启动、会话列表返回空,因此该检查报 `fail` 并在 `detail` 里写明原因(dsh-doctor 0.5.3 加入;信封、状态集合与检查词汇表均不变)。
 
 ## v1.1 增补:可选信封字段 `remediation`(三方 +1 通过)

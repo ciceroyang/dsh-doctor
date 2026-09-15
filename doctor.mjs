@@ -399,6 +399,210 @@ export function checkDedupe(home) {
   return { name: 'dedupe', status: 'pass', detail: present.length > 0 ? present.join('/') + ' 单一副本' : '未发现关键包' }
 }
 
+/**
+ * Minimal semver comparison for the peer-range check. Not a full implementation:
+ * enough of the grammar (`^ ~ >= <= > < = x` and `||`) plus prerelease ordering.
+ * Everything unparseable resolves to null, which callers must report as unknown —
+ * never as incompatible. A doctor that fails a healthy profile is worse than none.
+ */
+export function parseSemver(text) {
+  const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(String(text).trim())
+  if (!m) return null
+  return {
+    major: Number(m[1]),
+    minor: m[2] === undefined ? 0 : Number(m[2]),
+    patch: m[3] === undefined ? 0 : Number(m[3]),
+    pre: m[4] ? m[4].split('.') : [],
+  }
+}
+
+function comparePrerelease(a, b) {
+  if (a.length === 0 && b.length === 0) return 0
+  if (a.length === 0) return 1
+  if (b.length === 0) return -1
+  const n = Math.max(a.length, b.length)
+  for (let i = 0; i < n; i += 1) {
+    const x = a[i]
+    const y = b[i]
+    if (x === undefined) return -1
+    if (y === undefined) return 1
+    const nx = /^\d+$/.test(x)
+    const ny = /^\d+$/.test(y)
+    if (nx && ny) {
+      if (Number(x) !== Number(y)) return Number(x) < Number(y) ? -1 : 1
+    } else if (nx) return -1
+    else if (ny) return 1
+    else if (x !== y) return x < y ? -1 : 1
+  }
+  return 0
+}
+
+export function compareSemver(a, b) {
+  if (a.major !== b.major) return a.major < b.major ? -1 : 1
+  if (a.minor !== b.minor) return a.minor < b.minor ? -1 : 1
+  if (a.patch !== b.patch) return a.patch < b.patch ? -1 : 1
+  return comparePrerelease(a.pre, b.pre)
+}
+
+export function parseComparator(text) {
+  const t = text.trim()
+  if (t === '' || t === '*' || /^x$/i.test(t)) return { kind: 'any' }
+  const m = /^(>=|<=|>|<|=|\^|~)?\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?$/.exec(t)
+  if (!m) return null
+  return {
+    kind: 'cmp',
+    op: m[1] || '=',
+    hasMinor: m[3] !== undefined,
+    hasPatch: m[4] !== undefined,
+    version: {
+      major: Number(m[2]),
+      minor: m[3] === undefined ? 0 : Number(m[3]),
+      patch: m[4] === undefined ? 0 : Number(m[4]),
+      pre: m[5] ? m[5].split('.') : [],
+    },
+  }
+}
+
+function satisfiesComparator(version, c) {
+  if (c.kind === 'any') return true
+  const v = c.version
+  const cmp = compareSemver(version, v)
+  if (c.op === '=') {
+    if (c.hasPatch) return cmp === 0
+    if (c.hasMinor) return cmp >= 0 && version.major === v.major && version.minor === v.minor
+    return version.major === v.major
+  }
+  if (c.op === '>') return cmp > 0
+  if (c.op === '>=') return cmp >= 0
+  if (c.op === '<') return cmp < 0
+  if (c.op === '<=') return cmp <= 0
+  if (c.op === '^') {
+    if (cmp < 0) return false
+    const upper = v.major > 0
+      ? { major: v.major + 1, minor: 0, patch: 0, pre: [] }
+      : v.minor > 0
+        ? { major: 0, minor: v.minor + 1, patch: 0, pre: [] }
+        : { major: 0, minor: 0, patch: v.patch + 1, pre: [] }
+    return compareSemver(version, upper) < 0
+  }
+  if (c.op === '~') {
+    if (cmp < 0) return false
+    const upper = c.hasMinor ? { major: v.major, minor: v.minor + 1, patch: 0, pre: [] } : { major: v.major + 1, minor: 0, patch: 0, pre: [] }
+    return compareSemver(version, upper) < 0
+  }
+  return null
+}
+
+function satisfiesGroup(version, comps) {
+  for (const c of comps) {
+    const r = satisfiesComparator(version, c)
+    if (r === false) return false
+    if (r === null) return null
+  }
+  if (version.pre.length > 0) {
+    const allowed = comps.some((c) => c.kind === 'cmp' && c.version.pre.length > 0 &&
+      c.version.major === version.major && c.version.minor === version.minor && c.version.patch === version.patch)
+    if (!allowed) return null
+  }
+  return true
+}
+
+export function satisfiesRange(version, range) {
+  const v = parseSemver(version)
+  if (!v) return null
+  let undecidable = false
+  for (const group of String(range).split('||')) {
+    const parts = group.trim().split(/\s+/).filter(Boolean)
+    if (parts.length === 0) continue
+    const comps = parts.map(parseComparator)
+    if (comps.some((c) => c === null)) return null
+    const verdict = satisfiesGroup(v, comps)
+    if (verdict === true) return true
+    if (verdict === null) undecidable = true
+  }
+  return undecidable ? null : false
+}
+
+function readPackageJson(path) {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+function resolveInstalledPackage(home, profile, name) {
+  const candidates = [
+    join(home, 'profiles', profile, 'node_modules', name, 'package.json'),
+    join(home, 'profiles', 'node_modules', name, 'package.json'),
+  ]
+  for (const candidate of candidates) {
+    const pkg = readPackageJson(candidate)
+    if (pkg && typeof pkg.version === 'string') return pkg
+  }
+  return null
+}
+
+/**
+ * Vendor-local check (contract rule 1). Compares each installed plugin's declared
+ * @deepseek-ai/* peer ranges against the host versions actually present in the
+ * profile — the offline half of the plugin-x-harness compatibility question from
+ * discussion #4792. Three states: compatible / incompatible / unknown (wildcard,
+ * absent, unparseable, or prerelease-ambiguous). Unknown is never called compatible.
+ */
+export function checkPluginPeerRange(home, opts = {}) {
+  const strict = opts.strictPeer === true
+  const name = 'ciceroyang/peer_range'
+  const profilesDir = join(home, 'profiles')
+  if (!existsSync(profilesDir)) return { name, status: 'pass', detail: '无 profiles 目录' }
+  const incompatible = []
+  let compatible = 0
+  let unknown = 0
+  let plugins = 0
+  let profiles = 0
+  let entries = 0
+  for (const entry of readdirSync(profilesDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === 'node_modules') continue
+    const profilePkg = readPackageJson(join(profilesDir, entry.name, 'package.json'))
+    if (!profilePkg) continue
+    const deps = Object.keys(profilePkg.dependencies || {})
+    if (deps.length === 0) continue
+    profiles += 1
+    for (const dep of deps) {
+      const installed = resolveInstalledPackage(home, entry.name, dep)
+      if (!installed) continue
+      plugins += 1
+      for (const [host, range] of Object.entries(installed.peerDependencies || {})) {
+        if (!host.startsWith('@deepseek-ai/')) continue
+        entries += 1
+        const hostInstalled = resolveInstalledPackage(home, entry.name, host)
+        if (!hostInstalled) {
+          unknown += 1
+          continue
+        }
+        const wildcard = String(range).trim() === '' || String(range).trim() === '*'
+        const verdict = wildcard ? null : satisfiesRange(hostInstalled.version, range)
+        if (verdict === true) compatible += 1
+        else if (verdict === false) incompatible.push(dep + ' 需要 ' + host + ' ' + range + ',已装 ' + hostInstalled.version)
+        else unknown += 1
+      }
+    }
+  }
+  const summary = '已装插件 ' + plugins + '(profile ' + profiles + ' 个),host 声明 ' + entries + ' 条:兼容 ' + compatible + ' / 未知 ' + unknown
+  if (incompatible.length > 0) {
+    return {
+      name,
+      status: 'fail',
+      detail: summary + ' / 不兼容 ' + incompatible.length + ' — ' + incompatible.slice(0, 3).join('; ') +
+        (incompatible.length > 3 ? ' 等' : '') + '(修复:升级插件到区间包含当前 harness 的版本,或回退 harness)',
+    }
+  }
+  if (strict && unknown > 0) {
+    return { name, status: 'warn', detail: summary + ' — 未知来自 `*`/未声明/无法解析;--strict-peer 要求确认' }
+  }
+  return { name, status: 'pass', detail: summary + (unknown > 0 ? '(未知主要是 `*` 通配声明)' : '') }
+}
+
 /** Whether the runtime ships built-in zstd (Node >= 22.15). */
 export function zstdAvailable() {
   if (typeof process.getBuiltinModule !== 'function') return false
@@ -417,7 +621,7 @@ export function defaultHome() {
 }
 
 export async function runAll(home = defaultHome(), opts = {}) {
-  const sync = [checkNode(), checkPnpm(), checkDsh(), checkDshHome(home), checkProfiles(home), checkSessions(home), checkZstd(), checkDedupe(home), checkLogHealth(home, opts)]
+  const sync = [checkNode(), checkPnpm(), checkDsh(), checkDshHome(home), checkProfiles(home), checkSessions(home), checkZstd(), checkDedupe(home), checkLogHealth(home, opts), checkPluginPeerRange(home, opts)]
   const port = await checkPort()
   return [...sync, port]
 }
@@ -463,13 +667,14 @@ export function buildEnvelope(checks, home, opts = {}) {
 }
 
 function parseArgs(argv) {
-  const args = { json: false, envelope: false, profile: null, remediation: false, allLogs: false }
+  const args = { json: false, envelope: false, profile: null, remediation: false, allLogs: false, strictPeer: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--json') args.json = true
     else if (arg === '--envelope') args.envelope = true
     else if (arg === '--remediation') args.remediation = true
     else if (arg === '--all-logs') args.allLogs = true
+    else if (arg === '--strict-peer') args.strictPeer = true
     else if (arg === '--profile') {
       args.profile = argv[++i]
       if (!args.profile) {
@@ -493,6 +698,7 @@ const REMEDIATIONS = {
   sessions: '检查 DSH_HOME 指向与目录权限',
   log_health: '会话日志损坏:参考官方讨论 #1043,或社区工具 dsh-session-health 做帧级诊断',
   dedupe: 'dsh plugin --profile <p> dedupe;仍有多副本则卸载重装相关插件(#1849)',
+  'ciceroyang/peer_range': '升级插件到区间包含当前 harness 的版本,或把 harness 回退到插件声明的范围内(#4792)',
   port: 'dsh --profile web --port <其他端口> 换端口启动',
 }
 
@@ -540,7 +746,7 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv
 if (isMain) {
   const args = parseArgs(process.argv.slice(2))
   const home = args.profile ?? defaultHome()
-  runAll(home, { allLogs: args.allLogs }).then((checks) => {
+  runAll(home, { allLogs: args.allLogs, strictPeer: args.strictPeer }).then((checks) => {
     if (args.envelope) {
       console.log(JSON.stringify(buildEnvelope(checks, home, { remediation: args.remediation }), null, 2))
     } else {
