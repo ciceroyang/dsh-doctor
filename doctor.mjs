@@ -500,9 +500,13 @@ function satisfiesGroup(version, comps) {
     if (r === null) return null
   }
   if (version.pre.length > 0) {
-    const allowed = comps.some((c) => c.kind === 'cmp' && c.version.pre.length > 0 &&
-      c.version.major === version.major && c.version.minor === version.minor && c.version.patch === version.patch)
-    if (!allowed) return null
+    // A group that mentions any prerelease is prerelease-aware, so evaluate it
+    // numerically: `>=0.1.0-rc.5 <0.2.0` genuinely accepts 0.1.5-rc.2, while
+    // `>=0.1.0-rc.5 <0.1.0-rc.7` genuinely rejects it. Only a release-only group
+    // (e.g. `>=4.0.0`) against a prerelease install is undecidable: strict semver
+    // excludes it, but calling that a hard incompatibility would fail healthy setups.
+    const prereleaseAware = comps.some((c) => c.kind === 'cmp' && c.version.pre.length > 0)
+    if (!prereleaseAware) return null
   }
   return true
 }

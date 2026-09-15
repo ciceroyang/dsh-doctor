@@ -34,9 +34,16 @@ test('semver: unparseable and prerelease-ambiguous ranges are null, never false'
   // matches do we fall back to undecidable
   assert.equal(satisfiesRange('1.0.0', '>=1.0.0 <2.0.0 || ~x.y'), true)
   assert.equal(satisfiesRange('3.0.0', '>=1.0.0 <2.0.0 || ~x.y'), null)
-  // 0.1.5-rc.2 has a prerelease and no comparator shares its tuple: undecidable,
-  // which must not be reported as a hard incompatibility.
-  assert.equal(satisfiesRange('0.1.5-rc.2', '>=0.1.0-rc.5 <0.2.0'), null)
+  // A prerelease-aware group (one that mentions any prerelease) is evaluated
+  // numerically: the common shape accepts a later prerelease...
+  assert.equal(satisfiesRange('0.1.5-rc.2', '>=0.1.0-rc.5 <0.2.0'), true)
+  // ...and a narrowly pinned one genuinely rejects it (the real dsh-win32 case,
+  // whose @deepseek-ai/dsh-subprocess-local range stops at <0.1.0-rc.7 while the
+  // current CLI ships 0.1.5-rc.2).
+  assert.equal(satisfiesRange('0.1.5-rc.2', '>=0.1.0-rc.5 <0.1.0-rc.7'), false)
+  // A release-only group against a prerelease install stays undecidable: strict
+  // semver excludes it, but that is not a hard incompatibility.
+  assert.equal(satisfiesRange('4.1.0-rc.1', '>=4.0.0'), null)
 })
 
 function fixtureHome() {
