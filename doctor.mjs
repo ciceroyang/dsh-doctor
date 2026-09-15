@@ -670,8 +670,103 @@ export function buildEnvelope(checks, home, opts = {}) {
   return envelope
 }
 
+/**
+ * Host package versions provided by a DSH CLI install, keyed by `@deepseek-ai/<name>`.
+ * Roots are the CLI's own bundled packages and the global install; missing roots are skipped.
+ */
+export function installedHostVersions(roots = defaultHostRoots()) {
+  const hosts = {}
+  for (const dir of roots) {
+    let entries = []
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const key = '@deepseek-ai/' + entry.name
+      if (hosts[key]) continue
+      const pkg = readPackageJson(join(dir, entry.name, 'package.json'))
+      if (pkg && typeof pkg.version === 'string') hosts[key] = pkg.version
+    }
+  }
+  return hosts
+}
+
+function defaultHostRoots() {
+  const roots = []
+  try {
+    const globalRoot = execFileSync('npm', ['root', '-g'], { encoding: 'utf8', timeout: 20000 }).trim()
+    roots.push(join(globalRoot, '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai'))
+    roots.push(join(globalRoot, '@deepseek-ai'))
+  } catch {
+    // npm unavailable: no host versions, every precise range becomes unresolved
+  }
+  return roots
+}
+
+/**
+ * Lint one package's `@deepseek-ai/*` peer declarations against installed host
+ * versions. Same three-state rule as the profile check, but used from the plugin
+ * author's side: it answers "does my declaration cover the host I am testing on?"
+ * @param {object} pkg - parsed package.json.
+ * @param {Record<string, string>} hosts - installed host versions.
+ * @returns {{rows: Array<object>, counts: object, hasPeers: boolean}}
+ */
+export function lintPeerDeclarations(pkg, hosts) {
+  const peers = Object.entries(pkg?.peerDependencies ?? {}).filter(([host]) => host.startsWith('@deepseek-ai/'))
+  const rows = []
+  for (const [host, range] of peers) {
+    const installed = hosts[host] ?? null
+    const text = String(range).trim()
+    let verdict
+    if (text === '' || text === '*') verdict = 'wildcard'
+    else if (installed === null) verdict = 'unresolved'
+    else {
+      const result = satisfiesRange(installed, range)
+      verdict = result === true ? 'compatible' : result === false ? 'incompatible' : 'undecidable'
+    }
+    rows.push({ host, range, installed, verdict })
+  }
+  const counts = { compatible: 0, incompatible: 0, wildcard: 0, unresolved: 0, undecidable: 0 }
+  for (const row of rows) counts[row.verdict] += 1
+  return { rows, counts, hasPeers: peers.length > 0 }
+}
+
+function lintPeersAt(target) {
+  const path = join(target, 'package.json')
+  const pkgPath = existsSync(path) ? path : target
+  const pkg = readPackageJson(pkgPath)
+  if (!pkg) throw new Error('找不到或无法解析 package.json: ' + pkgPath)
+  const hosts = installedHostVersions()
+  // Never pass silently when there is nothing to compare against: on a machine
+  // without a DSH install every precise range would read as "unresolved" and the
+  // lint would exit 0, which is the one wrong answer that matters.
+  if (Object.keys(hosts).length === 0) {
+    throw new Error('本机找不到任何 @deepseek-ai host 包;请先 npm install -g @deepseek-ai/dsh 再运行(否则所有精确区间都会显示为未解析,检查结果没有意义)')
+  }
+  return { pkg, hosts, ...lintPeerDeclarations(pkg, hosts) }
+}
+
+const LINT_MARK = { compatible: '✓ 兼容', incompatible: '✗ 不兼容', wildcard: '· 通配(*)', unresolved: '? 未解析', undecidable: '? 无法判定' }
+
+function renderLint(result) {
+  console.log('peer 声明检查: ' + (result.pkg.name ?? '(未命名)') + '@' + (result.pkg.version ?? '?') + '  · host 版本来自本机 CLI 安装(' + Object.keys(result.hosts).length + ' 个包)')
+  console.log('')
+  for (const row of result.rows) {
+    console.log('  ' + LINT_MARK[row.verdict] + '  ' + row.host + '  ' + row.range + '  (已装 ' + (row.installed ?? '-') + ')')
+  }
+  console.log('')
+  console.log('结果: ' + result.counts.compatible + ' 兼容 / ' + result.counts.incompatible + ' 不兼容 / ' + result.counts.wildcard + ' 通配 / ' + result.counts.unresolved + ' 未解析 / ' + result.counts.undecidable + ' 无法判定')
+  if (!result.hasPeers) console.log('这个包没有声明任何 @deepseek-ai/* peer:目录与升级检查无法从元数据判断兼容性(#4792)。')
+  else if (result.counts.incompatible > 0) console.log('把不兼容的区间改到包含当前 host 的版本,或明确写出你实际测试过的版本线。')
+  if (result.counts.wildcard > 0) console.log('通配 `*` 等于没有声明:需要兼容性判断的消费者会把它当作未知,而不是通过。')
+  if (result.counts.unresolved > 0) console.log('未解析项:该 host 包不在本机 CLI 里,换一台装了对应包的机器再跑一次。')
+}
+
 function parseArgs(argv) {
-  const args = { json: false, envelope: false, profile: null, remediation: false, allLogs: false, strictPeer: false }
+  const args = { json: false, envelope: false, profile: null, remediation: false, allLogs: false, strictPeer: false, lintPeers: false, lintTarget: null }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--json') args.json = true
@@ -679,6 +774,11 @@ function parseArgs(argv) {
     else if (arg === '--remediation') args.remediation = true
     else if (arg === '--all-logs') args.allLogs = true
     else if (arg === '--strict-peer') args.strictPeer = true
+    else if (arg === '--lint-peers') {
+      args.lintPeers = true
+      const next = argv[i + 1]
+      if (next && !next.startsWith('--')) { args.lintTarget = next; i += 1 }
+    }
     else if (arg === '--profile') {
       args.profile = argv[++i]
       if (!args.profile) {
@@ -749,6 +849,16 @@ function render(checks, json) {
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 if (isMain) {
   const args = parseArgs(process.argv.slice(2))
+  if (args.lintPeers) {
+    try {
+      const result = lintPeersAt(args.lintTarget ?? '.')
+      renderLint(result)
+      process.exit(result.counts.incompatible > 0 ? 1 : 0)
+    } catch (error) {
+      console.error('lint-peers: ' + error.message)
+      process.exit(2)
+    }
+  }
   const home = args.profile ?? defaultHome()
   runAll(home, { allLogs: args.allLogs, strictPeer: args.strictPeer }).then((checks) => {
     if (args.envelope) {

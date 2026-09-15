@@ -12,6 +12,20 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
     node doctor.mjs --profile <目录>          # 指定 DSH_HOME/目录
     node doctor.mjs --all-logs                # 全库扫描会话日志(默认只抽样最新的 3 个)
     node doctor.mjs --strict-peer             # 把「插件未声明兼容范围」提升为 warning
+    node doctor.mjs --lint-peers [目录]        # 检查本包自己的 @deepseek-ai/* peer 区间(不匹配时退出码 1)
+
+## 在 CI 里检查自己的声明
+
+`--lint-peers` 是 `ciceroyang/peer_range` 的作者侧:读当前包的 `@deepseek-ai/*` peer 声明,与一个 DSH 安装提供的 host 版本逐条比对。
+
+```yaml
+- run: npm install -g @deepseek-ai/dsh
+- run: node doctor.mjs --lint-peers .
+```
+
+退出码:`0` 所有声明区间都覆盖已装 host;`1` 至少一条不覆盖;`2` 用法错误**或本机没找到 DSH 安装**——没有可比对对象时绝不静默通过。`*` 声明会显示为通配,而不是通过。
+
+全生态的评分快照:https://gist.github.com/ciceroyang/3df3dc47e0d4c1455d1bd6c3b861e93a (305 个有 host peer 的插件中,41 个至少有一条区间不包含当前 host)。
 
 ## 社区契约(dsh-doctor/v1)
 

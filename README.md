@@ -12,6 +12,20 @@ One-command health check for DeepSeek Harness local environments. A zero-depende
     node doctor.mjs --profile <dir>           # target a specific DSH_HOME/directory
     node doctor.mjs --all-logs                # scan every session log (default samples the newest 3)
     node doctor.mjs --strict-peer             # treat an undeclared plugin peer range as a warning
+    node doctor.mjs --lint-peers [dir]        # check THIS package's own @deepseek-ai/* peer ranges (exit 1 on mismatch)
+
+## Lint your own declaration in CI
+
+`--lint-peers` is the author-side half of `ciceroyang/peer_range`: it reads the current package's `@deepseek-ai/*` peer declarations and compares them against the host versions provided by a DSH install.
+
+```yaml
+- run: npm install -g @deepseek-ai/dsh
+- run: node doctor.mjs --lint-peers .
+```
+
+Exit codes: `0` every declared range covers the installed host; `1` at least one does not; `2` usage error **or no DSH install was found** — it never passes silently when there is nothing to compare against. `*` declarations are reported as wildcards, not as passes.
+
+A snapshot of how the whole ecosystem scores on this is at https://gist.github.com/ciceroyang/3df3dc47e0d4c1455d1bd6c3b861e93a (305 plugins with host peers: 41 have at least one range that excludes the current host).
 
 ## Community contract (dsh-doctor/v1)
 
