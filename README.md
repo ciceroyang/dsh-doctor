@@ -10,6 +10,7 @@ One-command health check for DeepSeek Harness local environments. A zero-depende
     node doctor.mjs --json                    # checks array
     node doctor.mjs --json --envelope         # dsh-doctor/v1 envelope (community contract)
     node doctor.mjs --profile <dir>           # target a specific DSH_HOME/directory
+    node doctor.mjs --all-logs                # scan every session log (default samples the newest 3)
 
 ## Community contract (dsh-doctor/v1)
 
@@ -33,7 +34,7 @@ Aligned with the zoahdev and moonquake2004 implementations (official discussion 
 - built-in zstd availability
 - port 3080 availability
 - duplicate critical packages (multiple dsh-tools/dsh-skill/cordis copies = tool-scheduling crash risk, #1849)
-- session-log health sampling (multi-frame zstd frame scan + full decode — the differentiating check), including the #6651 first-frame condition (the first frame must be exactly one `session` header line; violating it decodes fine but blocks `dsh web` startup and empties session listings)
+- session-log health sampling (multi-frame zstd frame scan + full decode — the differentiating check), including the #6651 first-frame condition (the first frame must be exactly one `session` header line; violating it decodes fine but blocks `dsh web` startup and empties session listings). `--all-logs` scans the whole store instead of the newest 3, so a single blocked log cannot hide outside the sample
 
 Every check reports ok / warn / fail with an actionable fix.
 

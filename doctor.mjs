@@ -13,7 +13,7 @@
  * @module dsh-doctor
  */
 
-import { existsSync, readdirSync, readFileSync, accessSync, constants, realpathSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, accessSync, constants, realpathSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -223,6 +223,23 @@ export function zstdDecompressAll(bytes) {
   return parts.join('')
 }
 
+const HEAD_BYTES = 4 * 1024 * 1024
+
+function readHead(path, bytes = HEAD_BYTES) {
+  const fd = openSync(path, 'r')
+  try {
+    const buf = Buffer.alloc(bytes)
+    const n = readSync(fd, buf, 0, bytes, 0)
+    return buf.subarray(0, n)
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function relativeTo(home, path) {
+  return path.startsWith(home) ? path.slice(home.length + 1) : path
+}
+
 /**
  * Sample the newest session logs and verify multi-frame zstd health. The
  * differentiating check: a broken or torn frame usually hides here while the
@@ -230,7 +247,8 @@ export function zstdDecompressAll(bytes) {
  * @param {string} home - DSH home.
  * @returns {{name: string, status: string, detail: string}} check result.
  */
-export function checkLogHealth(home) {
+export function checkLogHealth(home, opts = {}) {
+  const allLogs = opts.allLogs === true
   const dir = join(home, 'sessions')
   if (!existsSync(dir)) return { name: 'log_health', status: 'pass', detail: '无会话目录' }
   const logs = []
@@ -257,35 +275,55 @@ export function checkLogHealth(home) {
   logs.sort((a, b) => b.mtime - a.mtime)
   if (logs.length === 0) return { name: 'log_health', status: 'pass', detail: '0 个日志' }
   if (!zstdAvailable()) return { name: 'log_health', status: 'warn', detail: logs.length + ' 个日志,但当前 Node 无内置 zstd,无法解码' }
-  const sample = logs.slice(0, 3)
+  const selected = allLogs ? logs : logs.slice(0, 3)
   const results = []
+  const offenders = []
   let bad = 0
   let headerIssues = 0
-  for (const entry of sample) {
+  let undetermined = 0
+  for (const entry of selected) {
     try {
-      const bytes = readFileSync(entry.path)
+      // A full scan reads only the head of each log: the first frame is what the
+      // startup check cares about, and session logs can be large.
+      const bytes = allLogs ? readHead(entry.path) : readFileSync(entry.path)
       const frames = scanZstdFrames(bytes)
-      const text = zstdDecompressAll(bytes)
-      const lines = text.split('\n').filter((l) => l.trim() !== '').length
+      if (frames.length === 0) {
+        undetermined += 1
+        continue
+      }
       const issue = headerFrameIssue(bytes)
       if (issue) {
         headerIssues += 1
-        results.push(frames.length + '帧/' + lines + '行 [首帧异常:' + issue + ']')
-      } else {
+        offenders.push(relativeTo(home, entry.path) + ' [' + issue + ']')
+        if (!allLogs) {
+          const text = zstdDecompressAll(bytes)
+          const lines = text.split('\n').filter((l) => l.trim() !== '').length
+          results.push(frames.length + '帧/' + lines + '行 [首帧异常:' + issue + ']')
+        }
+      } else if (!allLogs) {
+        const text = zstdDecompressAll(bytes)
+        const lines = text.split('\n').filter((l) => l.trim() !== '').length
         results.push(frames.length + '帧/' + lines + '行')
       }
     } catch {
       bad += 1
-      results.push('解码失败')
+      offenders.push(relativeTo(home, entry.path) + ' [解码失败]')
+      if (!allLogs) results.push('解码失败')
     }
   }
+  if (allLogs) {
+    const summary = '全量扫描 ' + selected.length + '/' + logs.length + ' 个日志:首帧异常 ' + headerIssues + ' / 解码失败 ' + bad + (undetermined > 0 ? ' / 未判定 ' + undetermined : '')
+    if (headerIssues === 0 && bad === 0) return { name: 'log_health', status: 'pass', detail: summary }
+    const shown = offenders.slice(0, 5).join('; ')
+    return { name: 'log_health', status: 'fail', detail: summary + ' — ' + shown + (offenders.length > 5 ? ' 等 ' + offenders.length + ' 个' : '') }
+  }
   if (bad > 0) {
-    return { name: 'log_health', status: 'fail', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') + ' [' + bad + ' 个损坏]' }
+    return { name: 'log_health', status: 'fail', detail: '抽查 ' + selected.length + ' 个日志:' + results.join(' ') + ' [' + bad + ' 个损坏]' }
   }
   if (headerIssues > 0) {
-    return { name: 'log_health', status: 'fail', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') + ' [' + headerIssues + ' 个首帧异常]' }
+    return { name: 'log_health', status: 'fail', detail: '抽查 ' + selected.length + ' 个日志:' + results.join(' ') + ' [' + headerIssues + ' 个首帧异常,用 --all-logs 扫描全部]' }
   }
-  return { name: 'log_health', status: 'pass', detail: '抽查 ' + sample.length + ' 个日志:' + results.join(' ') }
+  return { name: 'log_health', status: 'pass', detail: '抽查 ' + selected.length + ' 个日志:' + results.join(' ') }
 }
 
 function statSyncFile(path) {
@@ -378,8 +416,8 @@ export function defaultHome() {
   return process.env.DSH_HOME || join(process.env.HOME || '.', '.dsh')
 }
 
-export async function runAll(home = defaultHome()) {
-  const sync = [checkNode(), checkPnpm(), checkDsh(), checkDshHome(home), checkProfiles(home), checkSessions(home), checkZstd(), checkDedupe(home), checkLogHealth(home)]
+export async function runAll(home = defaultHome(), opts = {}) {
+  const sync = [checkNode(), checkPnpm(), checkDsh(), checkDshHome(home), checkProfiles(home), checkSessions(home), checkZstd(), checkDedupe(home), checkLogHealth(home, opts)]
   const port = await checkPort()
   return [...sync, port]
 }
@@ -425,12 +463,13 @@ export function buildEnvelope(checks, home, opts = {}) {
 }
 
 function parseArgs(argv) {
-  const args = { json: false, envelope: false, profile: null, remediation: false }
+  const args = { json: false, envelope: false, profile: null, remediation: false, allLogs: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--json') args.json = true
     else if (arg === '--envelope') args.envelope = true
     else if (arg === '--remediation') args.remediation = true
+    else if (arg === '--all-logs') args.allLogs = true
     else if (arg === '--profile') {
       args.profile = argv[++i]
       if (!args.profile) {
@@ -501,7 +540,7 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv
 if (isMain) {
   const args = parseArgs(process.argv.slice(2))
   const home = args.profile ?? defaultHome()
-  runAll(home).then((checks) => {
+  runAll(home, { allLogs: args.allLogs }).then((checks) => {
     if (args.envelope) {
       console.log(JSON.stringify(buildEnvelope(checks, home, { remediation: args.remediation }), null, 2))
     } else {

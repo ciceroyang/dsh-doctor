@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkLogHealth, headerFrameIssue, zstdAvailable } from '../doctor.mjs'
@@ -48,4 +48,22 @@ test('checkLogHealth fails on a corrupt-header log and passes a healthy one (#66
   assert.equal(checkLogHealth(ok).status, 'pass')
   rmSync(bad, { recursive: true, force: true })
   rmSync(ok, { recursive: true, force: true })
+})
+
+test('checkLogHealth --all-logs finds a corrupt log outside the newest three (#6651)', (t) => {
+  if (!zstdAvailable()) { t.skip('no built-in zstd'); return }
+  const home = mkdtempSync(join(tmpdir(), 'ddall-'))
+  writeLog(home, 'bad-old', [EVENT, HEADER + EVENT])
+  const badPath = join(home, 'sessions', 'proj', 'bad-old', 'session.jsonl.zstd')
+  const old = new Date(1000000)
+  utimesSync(badPath, old, old)
+  for (let i = 0; i < 3; i += 1) writeLog(home, 'good' + i, [HEADER, EVENT])
+  // the newest-three sample never sees the oldest log
+  assert.equal(checkLogHealth(home).status, 'pass')
+  const full = checkLogHealth(home, { allLogs: true })
+  assert.equal(full.status, 'fail')
+  assert.match(full.detail, /全量扫描 4\/4/)
+  assert.match(full.detail, /首帧异常 1/)
+  assert.match(full.detail, /bad-old/)
+  rmSync(home, { recursive: true, force: true })
 })
