@@ -13,6 +13,7 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
     node doctor.mjs --all-logs                # 全库扫描会话日志(默认只抽样最新的 3 个)
     node doctor.mjs --strict-peer             # 把「插件未声明兼容范围」提升为 warning
     node doctor.mjs --lint-peers [目录]        # 检查本包自己的 @deepseek-ai/* peer 区间(不匹配时退出码 1)
+    node doctor.mjs --candidate-peer <补丁>     # 对某个 profile 预检一份待应用的补丁(不写入)
 
 ## 在 CI 里检查自己的声明
 
@@ -43,6 +44,18 @@ node scripts/ecosystem-compat.mjs --source <url或文件> --out compat.json --su
 ```
 
 首次手动运行(2026-09-15,社区目录的 503 个仓库):305 个声明了至少一条 host peer,41 个至少有一条区间不包含已装 host,162 个完全没有 host 声明。
+
+## 预检一份补丁(`candidate`,v1.2 草案)
+
+`--candidate-peer <patch.yml> --profile <profileDir>` 判定「这份补丁应用**之后**的树」,但不实际写入。它实现了 v1.2 `candidate` 草案(deepseek-ai/deepseek-harness#1719)里与声明相关的那一部分:
+
+| 检查 | 何时失败 |
+| --- | --- |
+| `candidate-insert-collision` | 插入的 id 已存在于当前树(warn) |
+| `candidate-module-installed` | 插入的包在变更后的树里找不到(fail) |
+| `candidate-peer-range` | 插入包声明的 `@deepseek-ai/*` 区间不包含它将拿到的 host(fail) |
+
+`--json` 会输出带 `mode: "candidate"` 的信封;默认信封永远不带该字段。本模式**不做任何写入**:隔离/回滚属于执行写入的安装器,输出里也这么写明。
 
 ## 社区契约(dsh-doctor/v1)
 

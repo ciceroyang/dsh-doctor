@@ -14,7 +14,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, accessSync, constants, realpathSync, statSync, openSync, readSync, closeSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
@@ -667,6 +667,11 @@ export function buildEnvelope(checks, home, opts = {}) {
   if (opts.remediation === true) {
     envelope.remediation = buildRemediation(checks)
   }
+  // v1.2 draft (deepseek-ai/deepseek-harness#1719): candidates are opt-in, so the
+  // frozen r5 envelope only grows a `mode` when a candidate run asks for one.
+  if (typeof opts.mode === 'string' && opts.mode !== '') {
+    envelope.mode = opts.mode
+  }
   return envelope
 }
 
@@ -765,8 +770,144 @@ function renderLint(result) {
   if (result.counts.unresolved > 0) console.log('未解析项:该 host 包不在本机 CLI 里,换一台装了对应包的机器再跑一次。')
 }
 
+/**
+ * Parse the loader-patch entries a `cordis.patch.yml` would insert.
+ *
+ * The profile template documents the file as a top-level YAML array of entries
+ * carrying `id` (and optionally `name`, `disabled`). A full YAML parser is out of
+ * scope for a zero-dependency tool, so this is a targeted line scanner over that
+ * documented shape; unknown lines are ignored rather than guessed at.
+ * @param {string} text - patch file content.
+ * @returns {Array<{id: string, name: string|null}>} enabled inserts in file order.
+ */
+export function parsePatchInserts(text) {
+  const inserts = []
+  let current = null
+  for (const line of String(text).split('\n')) {
+    const idMatch = /^\s*-?\s*id:\s*['"]?([\w@/.\-]+)['"]?\s*$/.exec(line)
+    if (idMatch) {
+      if (current) inserts.push(current)
+      current = { id: idMatch[1], name: null, disabled: false }
+      continue
+    }
+    if (!current) continue
+    const nameMatch = /^\s*name:\s*['"]?([^'"\s]+)['"]?\s*$/.exec(line)
+    if (nameMatch) {
+      current.name = nameMatch[1]
+      continue
+    }
+    if (/^\s*disabled:\s*true\s*$/.test(line)) current.disabled = true
+  }
+  if (current) inserts.push(current)
+  return inserts.filter((entry) => !entry.disabled)
+}
+
+const BUILTIN_PREFIXES = ['cordis:', 'node:']
+
+/** A package spec we can look for on disk (not a builtin, relative or absolute path). */
+function isResolvableSpec(name) {
+  if (typeof name !== 'string' || name === '') return false
+  if (BUILTIN_PREFIXES.some((prefix) => name.startsWith(prefix))) return false
+  if (name.startsWith('.') || name.startsWith('/')) return false
+  return true
+}
+
+function resolveInProfile(profileDir, name) {
+  const roots = [join(profileDir, 'node_modules'), join(dirname(profileDir), 'node_modules')]
+  for (const root of roots) {
+    // Presence is what this answers: a manifest without a version still means the
+    // package is in the tree. (Host versions are resolved separately, where a
+    // version is genuinely required.)
+    const pkg = readPackageJson(join(root, name, 'package.json'))
+    if (pkg) return pkg
+  }
+  return null
+}
+
+/** Every patch file already in the profile: its bundles' patches plus the user patch. */
+function existingPatchFiles(profileDir) {
+  const files = []
+  const manifest = readPackageJson(join(profileDir, 'package.json'))
+  const bundles = manifest?.dsh?.profile?.bundles ?? []
+  for (const bundle of bundles) {
+    const patch = join(profileDir, 'node_modules', bundle, 'cordis.patch.yml')
+    if (existsSync(patch)) files.push(patch)
+  }
+  const userPatch = join(profileDir, 'cordis.patch.yml')
+  if (existsSync(userPatch)) files.push(userPatch)
+  return files
+}
+
+/**
+ * Pre-flight checks for a proposed patch: judge the tree the change would produce,
+ * without applying it. Implements the declaration-focused subset of the v1.2
+ * `candidate` draft (deepseek-ai/deepseek-harness#1719): insert-id collision,
+ * inserted-module presence, and the host peer ranges of what would be inserted.
+ *
+ * It intentionally performs no mutation. The reversible action the draft requires
+ * (quarantine, then rollback) belongs to the installer that owns the write; this
+ * function is the pre-flight half and says so in its output.
+ * @param {string} profileDir - profile directory to evaluate against.
+ * @param {string} patchText - proposed `cordis.patch.yml` content.
+ * @returns {Array<{name: string, status: string, detail: string}>} checks.
+ */
+export function candidatePeerChecks(profileDir, patchText) {
+  const inserts = parsePatchInserts(patchText)
+  const existingIds = new Set()
+  for (const file of existingPatchFiles(profileDir)) {
+    for (const entry of parsePatchInserts(readFileSync(file, 'utf8'))) existingIds.add(entry.id)
+  }
+  const collisions = inserts.filter((entry) => existingIds.has(entry.id))
+  const seenSpecs = new Set()
+  const specs = inserts
+    .filter((entry) => isResolvableSpec(entry.name))
+    .filter((entry) => (seenSpecs.has(entry.name) ? false : (seenSpecs.add(entry.name), true)))
+  const missing = []
+  const peerRows = []
+  const hosts = installedHostVersions([
+    join(profileDir, 'node_modules', '@deepseek-ai'),
+    join(dirname(profileDir), 'node_modules', '@deepseek-ai'),
+  ])
+  for (const entry of specs) {
+    const pkg = resolveInProfile(profileDir, entry.name)
+    if (!pkg) {
+      missing.push(entry.name)
+      continue
+    }
+    const lint = lintPeerDeclarations(pkg, hosts)
+    for (const row of lint.rows) {
+      if (row.verdict === 'incompatible') peerRows.push(entry.name + ' 需要 ' + row.host + ' ' + row.range + ',已装 ' + row.installed)
+      else if (row.verdict === 'unresolved' || row.verdict === 'undecidable') peerRows.push(entry.name + ' ' + row.host + ' ' + row.range + '(未知)')
+    }
+  }
+  const checks = []
+  checks.push({
+    name: 'candidate-insert-collision',
+    status: collisions.length > 0 ? 'warn' : 'pass',
+    detail: collisions.length > 0
+      ? '插入的 id 已存在于当前树:' + collisions.map((entry) => entry.id).join(', ') + '(会碰撞而非新增)'
+      : '插入的 ' + inserts.length + ' 个 id 均未与当前树冲突',
+  })
+  checks.push({
+    name: 'candidate-module-installed',
+    status: missing.length > 0 ? 'fail' : 'pass',
+    detail: missing.length > 0
+      ? '要插入的包在变更后的树里找不到:' + missing.join(', ') + '(修复: dsh plugin --profile <name> add <pkg>)'
+      : (specs.length === 0 ? '没有可解析的包名(仅内置/相对路径)' : '要插入的 ' + specs.length + ' 个包都存在于目标树里'),
+  })
+  const incompatible = peerRows.filter((row) => !row.includes('(未知)'))
+  checks.push({
+    name: 'candidate-peer-range',
+    status: incompatible.length > 0 ? 'fail' : 'pass',
+    detail: incompatible.length > 0
+      ? '变更后 host 范围不匹配:' + incompatible.join('; ')
+      : (peerRows.length > 0 ? '有 ' + peerRows.length + ' 条声明无法确定(按未知处理,不计入失败)' : '没有声明精确 host 范围的插入项'),
+  })
+  return checks
+}
+
 function parseArgs(argv) {
-  const args = { json: false, envelope: false, profile: null, remediation: false, allLogs: false, strictPeer: false, lintPeers: false, lintTarget: null }
+  const args = { json: false, envelope: false, profile: null, remediation: false, allLogs: false, strictPeer: false, lintPeers: false, lintTarget: null, candidatePeer: null }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--json') args.json = true
@@ -774,6 +915,10 @@ function parseArgs(argv) {
     else if (arg === '--remediation') args.remediation = true
     else if (arg === '--all-logs') args.allLogs = true
     else if (arg === '--strict-peer') args.strictPeer = true
+    else if (arg === '--candidate-peer') {
+      args.candidatePeer = argv[++i]
+      if (!args.candidatePeer) { console.error('--candidate-peer requires a path'); process.exit(2) }
+    }
     else if (arg === '--lint-peers') {
       args.lintPeers = true
       const next = argv[i + 1]
@@ -849,6 +994,30 @@ function render(checks, json) {
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 if (isMain) {
   const args = parseArgs(process.argv.slice(2))
+  if (args.candidatePeer) {
+    try {
+      const target = resolve(args.candidatePeer)
+      const patchPath = statSync(target).isDirectory() ? join(target, 'cordis.patch.yml') : target
+      const profileDir = args.profile ?? defaultHome()
+      const checks = candidatePeerChecks(profileDir, readFileSync(patchPath, 'utf8'))
+      const envelope = buildEnvelope(checks, profileDir, { mode: 'candidate' })
+      if (args.json || args.envelope) console.log(JSON.stringify(envelope, null, 2))
+      else {
+        console.log('candidate 预检(不写入任何文件): ' + patchPath + ' → ' + profileDir)
+        console.log('')
+        for (const check of checks) {
+          const emoji = check.status === 'pass' ? '✓' : check.status === 'warn' ? '⚠' : '✗'
+          console.log(emoji + ' ' + check.name + ': ' + check.detail)
+        }
+        console.log('')
+        console.log('说明:这是变更前的判定;隔离/回滚属于执行写入的安装器(#1719 v1.2 第 4 条)。')
+      }
+      process.exit(computeExitCode(checks))
+    } catch (error) {
+      console.error('candidate-peer: ' + error.message)
+      process.exit(2)
+    }
+  }
   if (args.lintPeers) {
     try {
       const result = lintPeersAt(args.lintTarget ?? '.')

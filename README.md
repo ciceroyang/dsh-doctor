@@ -13,6 +13,7 @@ One-command health check for DeepSeek Harness local environments. A zero-depende
     node doctor.mjs --all-logs                # scan every session log (default samples the newest 3)
     node doctor.mjs --strict-peer             # treat an undeclared plugin peer range as a warning
     node doctor.mjs --lint-peers [dir]        # check THIS package's own @deepseek-ai/* peer ranges (exit 1 on mismatch)
+    node doctor.mjs --candidate-peer <patch>   # pre-flight a proposed patch against a profile (no writes)
 
 ## Lint your own declaration in CI
 
@@ -43,6 +44,18 @@ node scripts/ecosystem-compat.mjs --source <url-or-file> --out compat.json --sum
 ```
 
 First manual run (2026-09-15, the community directory's 503 repositories): 305 declare at least one host peer, 41 declare at least one range that excludes the installed host, and 162 declare no host range at all.
+
+## Pre-flight a patch (`candidate`, v1.2 draft)
+
+`--candidate-peer <patch.yml> --profile <profileDir>` judges the tree a proposed patch *would* produce, without applying it. It implements the declaration-focused subset of the v1.2 `candidate` draft (deepseek-ai/deepseek-harness#1719):
+
+| check | fails when |
+| --- | --- |
+| `candidate-insert-collision` | an inserted id already exists in the current tree (warn) |
+| `candidate-module-installed` | an inserted package is absent from the resulting tree (fail) |
+| `candidate-peer-range` | an inserted package's `@deepseek-ai/*` range excludes the host it would get (fail) |
+
+`--json` emits the envelope with `mode: "candidate"`; the default envelope never carries that field. This mode performs **no mutation**: quarantine/rollback belongs to the installer that owns the write, and the output says so.
 
 ## Community contract (dsh-doctor/v1)
 
