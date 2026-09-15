@@ -25,7 +25,22 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
 
 退出码:`0` 所有声明区间都覆盖已装 host;`1` 至少一条不覆盖;`2` 用法错误**或本机没找到 DSH 安装**——没有可比对对象时绝不静默通过。`*` 声明会显示为通配,而不是通过。
 
-全生态的评分快照:https://gist.github.com/ciceroyang/3df3dc47e0d4c1455d1bd6c3b861e93a (305 个有 host peer 的插件中,41 个至少有一条区间不包含当前 host)。
+全生态的评分快照以滚动 release 发布,见下一节。
+
+## 全生态快照
+
+`scripts/ecosystem-compat.mjs` 读取一个插件目录的仓库清单,抓取各仓库根 `package.json`,把每条 `@deepseek-ai/*` peer 声明与一个 DSH 安装提供的 host 版本比对打分。一个每周的 workflow 会跑它并把结果作为滚动 release 发布:
+
+- JSON:`https://github.com/ciceroyang/dsh-doctor/releases/download/ecosystem-compat/compat.json`
+- Markdown 摘要:`https://github.com/ciceroyang/dsh-doctor/releases/download/ecosystem-compat/compat-summary.md`
+
+也可以对任意来源跑:
+
+```sh
+node scripts/ecosystem-compat.mjs --source <url或文件> --out compat.json --summary compat-summary.md
+```
+
+首次手动运行(2026-09-15,社区目录的 503 个仓库):305 个声明了至少一条 host peer,41 个至少有一条区间不包含已装 host,162 个完全没有 host 声明。
 
 ## 社区契约(dsh-doctor/v1)
 

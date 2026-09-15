@@ -25,7 +25,22 @@ One-command health check for DeepSeek Harness local environments. A zero-depende
 
 Exit codes: `0` every declared range covers the installed host; `1` at least one does not; `2` usage error **or no DSH install was found** — it never passes silently when there is nothing to compare against. `*` declarations are reported as wildcards, not as passes.
 
-A snapshot of how the whole ecosystem scores on this is at https://gist.github.com/ciceroyang/3df3dc47e0d4c1455d1bd6c3b861e93a (305 plugins with host peers: 41 have at least one range that excludes the current host).
+A snapshot of how the whole ecosystem scores on this is published as a rolling release; see the next section.
+
+## Ecosystem snapshot
+
+`scripts/ecosystem-compat.mjs` reads a plugin directory's repository list, fetches each repository root `package.json`, and scores every `@deepseek-ai/*` peer declaration against the host versions a DSH install provides. A weekly workflow runs it and publishes the result as a rolling release:
+
+- JSON: `https://github.com/ciceroyang/dsh-doctor/releases/download/ecosystem-compat/compat.json`
+- Markdown summary: `https://github.com/ciceroyang/dsh-doctor/releases/download/ecosystem-compat/compat-summary.md`
+
+Run it against any source list:
+
+```sh
+node scripts/ecosystem-compat.mjs --source <url-or-file> --out compat.json --summary compat-summary.md
+```
+
+First manual run (2026-09-15, the community directory's 503 repositories): 305 declare at least one host peer, 41 declare at least one range that excludes the installed host, and 162 declare no host range at all.
 
 ## Community contract (dsh-doctor/v1)
 

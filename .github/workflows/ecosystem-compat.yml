@@ -1,0 +1,29 @@
+name: ecosystem compat
+
+on:
+  schedule:
+    - cron: '41 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install a DSH host
+        run: npm install -g @deepseek-ai/dsh
+      - name: Scan the ecosystem
+        run: node scripts/ecosystem-compat.mjs --out compat.json --summary compat-summary.md
+      - name: Publish the rolling snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view ecosystem-compat >/dev/null 2>&1 || gh release create ecosystem-compat --title "Ecosystem compatibility snapshots" --notes "Rolling snapshots of declared plugin host ranges against a current DSH install."
+          gh release upload ecosystem-compat compat.json compat-summary.md --clobber
+          gh release edit ecosystem-compat --notes-file compat-summary.md
