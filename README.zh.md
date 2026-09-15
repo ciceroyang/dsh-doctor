@@ -25,6 +25,8 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
 
 退出码:`0` 所有声明区间都覆盖已装 host;`1` 至少一条不覆盖;`2` 用法错误**或本机没找到 DSH 安装**——没有可比对对象时绝不静默通过。`*` 声明会显示为通配,而不是通过。
 
+规则本身写成了文档:[docs/host-peer-declarations.md](docs/host-peer-declarations.md)(解析顺序、三态、以及决定实现是否可用的预发布合并规则)。
+
 全生态的评分快照以滚动 release 发布,见下一节。
 
 ## 全生态快照

@@ -25,6 +25,8 @@ One-command health check for DeepSeek Harness local environments. A zero-depende
 
 Exit codes: `0` every declared range covers the installed host; `1` at least one does not; `2` usage error **or no DSH install was found** — it never passes silently when there is nothing to compare against. `*` declarations are reported as wildcards, not as passes.
 
+The rule itself is written down in [docs/host-peer-declarations.md](docs/host-peer-declarations.md): resolution order, the three states, and the prerelease combination that decides whether an implementation is usable on prerelease hosts.
+
 A snapshot of how the whole ecosystem scores on this is published as a rolling release; see the next section.
 
 ## Ecosystem snapshot
