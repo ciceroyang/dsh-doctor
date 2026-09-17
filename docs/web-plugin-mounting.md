@@ -6,11 +6,11 @@
 
 **1. The profile tree.** `$DSH_HOME/profiles/<name>/package.json` declares `dependencies` and
 `dsh.profile.bundles` — the ordered stack of bundle layers. The tree is composed once at boot: each
-bundle in that stack contributes its `cordis.patch.yml`, then the profile own patch layer, then any
+bundle in that stack contributes its `cordis.patch.yml`, then the profile's own patch layer, then any
 `--patch` overlay.
 
 **2. The host mount.** A package is only reachable if a loader entry names it. A bundle contributes
-entries through its patch file; the profile patch can also insert one by hand:
+entries through its patch file; the profile patch layer can also insert one by hand:
 
 ```yaml
 - insert:
