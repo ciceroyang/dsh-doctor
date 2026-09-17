@@ -74,6 +74,8 @@ node scripts/ecosystem-compat.mjs --source <url或文件> --out compat.json --su
 
 任一检查 fail 时退出码 1,否则 0;`--json` 把同样的检查按数据输出。
 
+完整机理——「装上 / 挂上 / 提供」三者的区别、只声明 `dsh.client` 的包为什么一直隐身、以及怎么在隔离的第二个实例里验证——见 [docs/web-plugin-mounting.zh.md](docs/web-plugin-mounting.zh.md)。
+
 `--json` 会输出带 `mode: "candidate"` 的信封;默认信封永远不带该字段。本模式**不做任何写入**:隔离/回滚属于执行写入的安装器,输出里也这么写明。
 
 ## 社区契约(dsh-doctor/v1)

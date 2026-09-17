@@ -74,6 +74,8 @@ The bundle is executed in an isolated `node:vm` context whose only global is a `
 
 Exit code is 1 when any check fails, 0 otherwise; `--json` prints the same checks as data.
 
+The full mechanism — installing vs mounting vs serving, why a `dsh.client`-only package stays invisible, and how to verify in an isolated second instance — is in [docs/web-plugin-mounting.md](docs/web-plugin-mounting.md).
+
 `--json` emits the envelope with `mode: "candidate"`; the default envelope never carries that field. This mode performs **no mutation**: quarantine/rollback belongs to the installer that owns the write, and the output says so.
 
 ## Community contract (dsh-doctor/v1)
