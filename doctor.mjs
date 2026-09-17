@@ -18,6 +18,7 @@ import { join, dirname, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
+import { createContext, runInContext } from 'node:vm'
 
 const DEFAULT_PORT = 3080
 
@@ -802,6 +803,187 @@ export function parsePatchInserts(text) {
   return inserts.filter((entry) => !entry.disabled)
 }
 
+/**
+ * Inspect one built client bundle without trusting it.
+ *
+ * The harness materializes this file in the browser as
+ * window.__ModuleLoader__.load({id, factory}); the id becomes the graph row
+ * identity, so an id that differs from the package name leaves the loader with
+ * a row it can never materialize. The bundle is executed in an isolated vm
+ * context with only the loader stub in scope, which also proves it does not
+ * reach for a browser global at registration time.
+ * @param {string} bundlePath - absolute path of the generated bundle.
+ * @param {string} expectedId - the package name the graph row will use.
+ * @returns {{name: string, status: string, detail: string}} one check.
+ */
+function inspectClientBundle(bundlePath, expectedId, declaredExternal) {
+  const name = 'plugin_client_bundle'
+  const registrations = []
+  try {
+    const code = readFileSync(bundlePath, 'utf8')
+    const context = createContext({ window: { __ModuleLoader__: { load(reg) { registrations.push(reg) } } } })
+    runInContext(code, context, { timeout: 2000, filename: bundlePath })
+  } catch (error) {
+    return { name, status: 'fail', detail: '执行产物失败: ' + error.message }
+  }
+  if (registrations.length !== 1) {
+    return { name, status: 'fail', detail: '期望正好注册 1 个模块,实际 ' + registrations.length }
+  }
+  const registration = registrations[0]
+  if (registration.id !== expectedId) {
+    return { name, status: 'fail', detail: '产物注册的 id=' + JSON.stringify(registration.id) + ' 与包名 ' + expectedId + ' 不一致,loader 会找不到入口' }
+  }
+  if (typeof registration.factory !== 'function') {
+    return { name, status: 'fail', detail: '注册缺少 factory 函数' }
+  }
+  const reactStub = {
+    createElement: function () { return null },
+    useMemo: function (fn) { return fn() },
+    useState: function (initial) { return [typeof initial === 'function' ? initial() : initial, function () {}] },
+    useEffect: function () {},
+    useRef: function () { return { current: undefined } },
+  }
+  // The client module system ships react and the automatic JSX runtime in its
+  // static table, so a jsx-runtime request is normal and must not read as
+  // broken. Anything else is recorded and reported rather than guessed at.
+  const jsxStub = { jsx: function () { return null }, jsxs: function () { return null }, Fragment: null }
+  const known = { react: reactStub, 'react/jsx-runtime': jsxStub, 'react-dom': { createPortal: function () { return null } } }
+  const requested = []
+  let exported
+  try {
+    exported = registration.factory(function (spec) {
+      requested.push(spec)
+      return known[spec]
+    })
+  } catch (error) {
+    return { name, status: 'fail', detail: 'factory 物化失败: ' + error.message + '(请求的外部依赖: ' + (requested.join(', ') || '无') + ')' }
+  }
+  if (!exported || typeof exported.apply !== 'function') {
+    return { name, status: 'fail', detail: '产物没有导出 apply(ctx),cordis 不会激活它' }
+  }
+  if (exported.inject !== undefined && (!Array.isArray(exported.inject) || exported.inject.some(function (item) { return typeof item !== 'string' }))) {
+    return { name, status: 'fail', detail: 'inject 必须是字符串数组' }
+  }
+  const declared = Array.isArray(declaredExternal) ? declaredExternal : []
+  const staticTable = { react: true, 'react/jsx-runtime': true, 'react-dom': true }
+  // A package the bundle requires must be declared in dsh.client.external so the
+  // module graph orders it before this row; otherwise the browser resolves it too
+  // late and the plugin dies on first render.
+  const undeclared = requested.filter(function (spec) {
+    if (staticTable[spec] === true) return false
+    return !declared.some(function (entry) { return entry === spec || entry === spec.replace(/\/client$/, '') })
+  })
+  const externalNote = requested.length === 0 ? '无外部依赖' : requested.join(', ')
+  if (undeclared.length > 0) {
+    return { name, status: 'warn', detail: '请求了 ' + undeclared.join(', ') + ' 但 dsh.client.external 未声明,浏览器里会因加载顺序或解析不到而失败;外部依赖: ' + externalNote }
+  }
+  return { name, status: 'pass', detail: '注册 id 与包名一致,factory 物化后导出 apply();inject=' + JSON.stringify(exported.inject === undefined ? null : exported.inject) + ';外部依赖: ' + externalNote }
+}
+
+/**
+ * Preflight a plugin package for mountability by a web profile.
+ *
+ * Written after a real trap: a package that declares only dsh.client is
+ * installed by "dsh plugin add" but never activated, because the profile only
+ * mounts packages it knows how to layer. A dsh.bundle patch is what makes the
+ * one-command install actually mount. This function answers, without
+ * installing anything, whether a given package can be mounted, and why not.
+ * @param {string} target - plugin package directory.
+ * @returns {Array<{name: string, status: string, detail: string}>} checks in report order.
+ */
+export function preflightWebPlugin(target) {
+  const dir = resolve(target)
+  const checks = []
+  const pkgPath = join(dir, 'package.json')
+  if (!existsSync(pkgPath)) return [{ name: 'plugin_manifest', status: 'fail', detail: '找不到 ' + pkgPath }]
+  let pkg
+  try {
+    pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+  } catch (error) {
+    return [{ name: 'plugin_manifest', status: 'fail', detail: 'package.json 不是合法 JSON: ' + error.message }]
+  }
+  const name = typeof pkg.name === 'string' ? pkg.name : ''
+  if (name === '') return [{ name: 'plugin_manifest', status: 'fail', detail: 'package.json 缺少 name' }]
+  checks.push({ name: 'plugin_manifest', status: 'pass', detail: name + '@' + (pkg.version === undefined ? '?' : pkg.version) })
+
+  const patchRel = pkg.dsh && pkg.dsh.bundle && typeof pkg.dsh.bundle.patch === 'string' ? pkg.dsh.bundle.patch : null
+  if (patchRel === null) {
+    checks.push({ name: 'plugin_host_mount', status: 'warn', detail: '没有声明 dsh.bundle.patch:dsh plugin add 只会把它装成依赖,不会挂进 loader 树;需要在 profile 的 cordis.patch.yml 手动加一条 insert(name: ' + name + ')' })
+  } else {
+    const patchPath = join(dir, patchRel)
+    if (!existsSync(patchPath)) {
+      checks.push({ name: 'plugin_host_mount', status: 'fail', detail: 'dsh.bundle.patch 指向的 ' + patchRel + ' 不存在' })
+    } else {
+      const inserts = parsePatchInserts(readFileSync(patchPath, 'utf8'))
+      const row = inserts.find(function (entry) { return entry.name === name })
+      if (row) {
+        checks.push({ name: 'plugin_host_mount', status: 'pass', detail: patchRel + ' 里有一条 name: ' + name + ' 的 insert' })
+      } else {
+        const seen = inserts.map(function (entry) { return entry.name === null ? entry.id : entry.name }).join(', ')
+        checks.push({ name: 'plugin_host_mount', status: 'fail', detail: patchRel + ' 里没有 name: ' + name + ' 的 insert(实际: ' + (seen === '' ? '空' : seen) + ')' })
+      }
+    }
+  }
+
+  const client = pkg.dsh ? pkg.dsh.client : undefined
+  let clientRel = null
+  if (client === undefined) {
+    checks.push({ name: 'plugin_client_export', status: 'skip', detail: '没有声明 dsh.client(纯宿主插件)' })
+    checks.push({ name: 'plugin_client_bundle', status: 'skip', detail: '没有声明 dsh.client' })
+  } else if (client === null || typeof client !== 'object') {
+    checks.push({ name: 'plugin_client_export', status: 'fail', detail: 'dsh.client 必须是对象' })
+    checks.push({ name: 'plugin_client_bundle', status: 'skip', detail: 'dsh.client 无效' })
+  } else if (client.platform !== 'web') {
+    checks.push({ name: 'plugin_client_export', status: 'fail', detail: 'dsh.client.platform = ' + JSON.stringify(client.platform) + ',client-modules 只认 "web"' })
+    checks.push({ name: 'plugin_client_bundle', status: 'skip', detail: 'platform 不是 web' })
+  } else {
+    const exportsField = pkg.exports
+    let rel
+    if (typeof exportsField === 'object' && exportsField !== null) {
+      const slot = exportsField['./client']
+      if (typeof slot === 'string') rel = slot
+      else if (slot !== null && typeof slot === 'object' && typeof slot.default === 'string') rel = slot.default
+    }
+    if (typeof rel !== 'string') {
+      checks.push({ name: 'plugin_client_export', status: 'fail', detail: '声明了 dsh.client 但 exports["./client"] 缺失或不是字符串' })
+      checks.push({ name: 'plugin_client_bundle', status: 'skip', detail: '没有可解析的产物路径' })
+    } else {
+      clientRel = rel
+      const bundlePath = join(dir, rel)
+      if (!existsSync(bundlePath)) {
+        checks.push({ name: 'plugin_client_export', status: 'fail', detail: 'exports["./client"] 指向的 ' + rel + ' 不存在' })
+        checks.push({ name: 'plugin_client_bundle', status: 'skip', detail: '产物文件缺失' })
+      } else {
+        checks.push({ name: 'plugin_client_export', status: 'pass', detail: 'exports["./client"] -> ' + rel })
+        checks.push(inspectClientBundle(bundlePath, name, client.external))
+      }
+    }
+  }
+
+  if (!Array.isArray(pkg.files)) {
+    checks.push({ name: 'plugin_npm_files', status: 'skip', detail: '没有 files 字段' })
+  } else {
+    const normalize = function (value) { return String(value).replace(/^\.\//, '') }
+    const wanted = []
+    if (patchRel !== null) wanted.push(normalize(patchRel))
+    if (clientRel !== null) wanted.push(normalize(clientRel))
+    const covered = function (item) {
+      return pkg.files.some(function (entry) {
+        const candidate = normalize(entry)
+        if (candidate === item) return true
+        // A directory entry (npm's files field) covers everything under it.
+        return candidate.endsWith('/') ? item.startsWith(candidate) : item.startsWith(candidate + '/')
+      })
+    }
+    const missing = wanted.filter(function (item) { return !covered(item) })
+    checks.push(missing.length > 0
+      ? { name: 'plugin_npm_files', status: 'warn', detail: 'files 未包含挂载所需文件: ' + missing.join(', ') + ',发布出去的包里会缺文件' }
+      : { name: 'plugin_npm_files', status: 'pass', detail: 'files 覆盖了挂载所需文件' })
+  }
+
+  return checks
+}
+
 const BUILTIN_PREFIXES = ['cordis:', 'node:']
 
 /** A package spec we can look for on disk (not a builtin, relative or absolute path). */
@@ -907,7 +1089,7 @@ export function candidatePeerChecks(profileDir, patchText) {
 }
 
 function parseArgs(argv) {
-  const args = { json: false, envelope: false, profile: null, remediation: false, allLogs: false, strictPeer: false, lintPeers: false, lintTarget: null, candidatePeer: null }
+  const args = { json: false, envelope: false, profile: null, remediation: false, allLogs: false, strictPeer: false, lintPeers: false, lintTarget: null, candidatePeer: null, webPlugin: null }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--json') args.json = true
@@ -918,6 +1100,10 @@ function parseArgs(argv) {
     else if (arg === '--candidate-peer') {
       args.candidatePeer = argv[++i]
       if (!args.candidatePeer) { console.error('--candidate-peer requires a path'); process.exit(2) }
+    }
+    else if (arg === '--web-plugin') {
+      args.webPlugin = argv[++i]
+      if (!args.webPlugin) { console.error('--web-plugin requires a path'); process.exit(2) }
     }
     else if (arg === '--lint-peers') {
       args.lintPeers = true
@@ -1015,6 +1201,27 @@ if (isMain) {
       process.exit(computeExitCode(checks))
     } catch (error) {
       console.error('candidate-peer: ' + error.message)
+      process.exit(2)
+    }
+  }
+  if (args.webPlugin) {
+    try {
+      const checks = preflightWebPlugin(args.webPlugin)
+      if (args.json || args.envelope) {
+        console.log(JSON.stringify(checks, null, 2))
+      } else {
+        console.log('web plugin 预检(不安装、不写入任何文件): ' + resolve(args.webPlugin))
+        console.log('')
+        for (const check of checks) {
+          const emoji = check.status === 'pass' ? '✓' : check.status === 'warn' ? '⚠' : check.status === 'fail' ? '✗' : '·'
+          console.log(emoji + ' ' + check.name + ': ' + check.detail)
+        }
+        console.log('')
+        console.log('说明:预检只判断这个包能不能被 web profile 挂载,不代表已经安装。')
+      }
+      process.exit(checks.some(function (check) { return check.status === 'fail' }) ? 1 : 0)
+    } catch (error) {
+      console.error('web-plugin: ' + error.message)
       process.exit(2)
     }
   }

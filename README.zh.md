@@ -14,6 +14,7 @@ DeepSeek Harness 本地环境一键体检。社区 Ideas 区 #1719 提案的落�
     node doctor.mjs --strict-peer             # 把「插件未声明兼容范围」提升为 warning
     node doctor.mjs --lint-peers [目录]        # 检查本包自己的 @deepseek-ai/* peer 区间(不匹配时退出码 1)
     node doctor.mjs --candidate-peer <补丁>     # 对某个 profile 预检一份待应用的补丁(不写入)
+    node doctor.mjs --web-plugin <目录>         # 预检一个插件包能不能被挂载(不安装)
 
 ## 在 CI 里检查自己的声明
 
@@ -55,6 +56,24 @@ node scripts/ecosystem-compat.mjs --source <url或文件> --out compat.json --su
 | `candidate-module-installed` | 插入的包在变更后的树里找不到(fail) |
 | `candidate-peer-range` | 插入包声明的 `@deepseek-ai/*` 区间不包含它将拿到的 host(fail) |
 
+## 预检一个插件包(`--web-plugin`)
+
+`--web-plugin <目录>` 回答的是插件作者在 `dsh plugin add` 看起来成功之后一分钟就会问的问题:**这个包到底会不会出现在 Web 界面里?** 不安装、不写入任何文件。
+
+它来自一个很容易踩的坑:只声明 `dsh.client` 的包,`dsh plugin add` 会把它装成依赖但**永远不会挂载**,因为 profile 只对声明了 `dsh.bundle` 的包做分层。我们本机的 profile 里就有一段关于 `@deepseek-ai/dsh-client-ui-llm-verifier` 的注释在说这件事,这个检查第一次运行就把复现出来了。
+
+| 检查 | 何时失败 |
+| --- | --- |
+| `plugin_manifest` | `package.json` 缺失或无法解析,或没有 `name` |
+| `plugin_host_mount` | 没有 `dsh.bundle.patch`(warn:一条命令装完不会挂载),或补丁文件不存在,或它插入的是别的包名 |
+| `plugin_client_export` | `dsh.client.platform` 不是 `web`,或 `exports["./client"]` 缺失、指向不存在的文件 |
+| `plugin_client_bundle` | 产物没有恰好注册一个 loader 条目、注册的 id 与包名不一致、物化失败、没有导出 `apply(ctx)`、`inject` 格式不对,或请求了 `dsh.client.external` 未声明的包 |
+| `plugin_npm_files` | `files` 漏掉补丁文件或浏览器端产物,发布出去的包装不上 |
+
+产物会在一个隔离的 `node:vm` 上下文里执行,作用域里只有一个 `window.__ModuleLoader__` 桩。这一件事同时证明两点:产物是有效的,而且它在注册阶段不碰任何浏览器全局。
+
+任一检查 fail 时退出码 1,否则 0;`--json` 把同样的检查按数据输出。
+
 `--json` 会输出带 `mode: "candidate"` 的信封;默认信封永远不带该字段。本模式**不做任何写入**:隔离/回滚属于执行写入的安装器,输出里也这么写明。
 
 ## 社区契约(dsh-doctor/v1)
@@ -80,6 +99,7 @@ node scripts/ecosystem-compat.mjs --source <url或文件> --out compat.json --su
 - 端口 3080 占用情况
 - 关键包重复检查(dsh-tools/dsh-skill/cordis 多副本 = 工具调度崩溃风险,#1849)
 - 会话日志健康抽查(多帧 zstd 帧扫描 + 全量解码,独家检查项),含 #6651 的首帧条件(首帧必须恰好一行 `session` header;违反时日志能正常解码,却会阻断 `dsh web` 启动并使会话列表为空)。`--all-logs` 改为全库扫描(默认只抽样最新 3 个),避免唯一那个坏日志落在抽样之外
+- 插件包预检(`--web-plugin`):一个包能不能被 web profile 挂载——`dsh.bundle` 宿主挂载点、`exports["./client"]`、产物注册的 loader id 是否等于包名、`dsh.client.external` 是否声明了实际请求的依赖、npm `files` 是否覆盖挂载所需文件。来自一个真实的坑(只声明 `dsh.client` 的包被 `dsh plugin add` 装成依赖但永不激活);第一次对我们自己那三个插件和 `@deepseek-ai/dsh-client-ui-llm-verifier` 运行就复现了它
 - 已装插件兼容性(`ciceroyang/peer_range`,按契约规则 1 使用厂商前缀本地 id):对每个 profile `dependencies` 里的插件,把它声明的 `@deepseek-ai/*` peer 范围与磁盘上实际安装的 host 版本比对,完全离线。三态:兼容 / 不兼容 / 未知(`*`、未声明、无法解析、rc 语义无法判定);未知只报未知、绝不当作兼容,`--strict-peer` 可把它升级为 warning。这是 #4792 插件 × harness 兼容性问题的离线一半
 
 输出 ok / warn / fail 三态,每项附可执行建议。
